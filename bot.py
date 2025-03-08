@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Получаем токен из переменных окружения
-TOKEN = os.environ.get("BOT_TOKEN")
+TOKEN = os.environ.get("BOT_TOKEN", "7919326998:AAEStNAdjyL3U6KIg3_P9QefPx3_iUe60jI")  # Ваш токен
+WEBHOOK_URL = "https://telegram-bot-rb7l.onrender.com/webhook"  # Ваш URL вебхука
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -46,5 +47,15 @@ def send_message(chat_id, text):
     response = requests.post(url, json=payload)
     logger.info(f"Sent message to chat_id {chat_id}. Response: {response.status_code}")
 
+def set_webhook():
+    url = f"https://api.telegram.org/bot{TOKEN}/setWebhook"
+    payload = {
+        "url": WEBHOOK_URL
+    }
+    response = requests.post(url, json=payload)
+    logger.info(f"Set webhook. Response: {response.json()}")
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)  # Используем порт 8080 для Render
+    set_webhook()  # Устанавливаем вебхук при запуске приложения
+    port = int(os.environ.get("PORT", 8080))  # Используем порт из окружения или 8080 по умолчанию
+    app.run(host='0.0.0.0', port=port)
