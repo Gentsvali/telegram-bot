@@ -1,9 +1,9 @@
 from dotenv import load_dotenv
+import os
+import logging
 import requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-import os
-import logging
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -25,13 +25,25 @@ FILTER_KEYBOARD = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-# Функция для получения пулов через DeFi Llama API
+# Функция для получения пулов
 def get_pools():
-    url = "https://yields.llama.fi/pools"  # API DeFi Llama для получения данных о пулах
+    url = "https://app.meteora.ag/pools"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            return response.json()["data"]  # Возвращает данные о пулах в формате JSON
+            soup = BeautifulSoup(response.text, 'html.parser')
+            pools = []
+            for pool in soup.find_all('div', class_='pool-item'):
+                pool_name = pool.find('p', class_='pool-name').text.strip() if pool.find('p', class_='pool-name') else "Название неизвестно"
+                pool_volume = pool.find('span', class_='pool-volume').text.strip() if pool.find('span', class_='pool-volume') else "Объем неизвестен"
+                pools.append({
+                    "name": pool_name,
+                    "volume": float(pool_volume.replace('$', '').replace(',', ''))  # Преобразуем объем в число
+                })
+            return pools
         else:
             logger.error(f"Failed to fetch pools. Status code: {response.status_code}")
             return None
@@ -44,11 +56,11 @@ def filter_pools(pools, user_id):
     filters = USER_FILTERS.get(user_id, {})
     filtered_pools = []
     for pool in pools:
-        # Фильтр по SOL (если указан)
-        if filters.get("token_type", "SOL") == "SOL" and "SOL" not in pool["symbol"]:
+        # Фильтр по SOL
+        if filters.get("token_type", "SOL") == "SOL" and not pool["name"].endswith("-SOL"):
             continue
         # Фильтр по минимальному объему
-        if "min_volume" in filters and pool["tvlUsd"] < filters["min_volume"]:
+        if "min_volume" in filters and pool["volume"] < filters["min_volume"]:
             continue
         # Фильтр по длительности (если нужен)
         if "duration" in filters:
@@ -91,7 +103,13 @@ async def pools(update: Update, context: CallbackContext):
         if filtered_pools:
             response = "Свежие пулы:\n"
             for pool in filtered_pools:
-                response += f"{pool['symbol']} - ${pool['tvlUsd']}\n"
+                pool_info = f"{pool['name']} - ${pool['volume']}\n"
+                # Если добавление нового пула превышает лимит, отправляем текущее сообщение и начинаем новое
+                if len(response) + len(pool_info) > 4096:
+                    await update.message.reply_text(response)
+                    response = "Свежие пулы (продолжение):\n"
+                response += pool_info
+            # Отправляем оставшуюся часть сообщения
             await update.message.reply_text(response)
         else:
             await update.message.reply_text("Нет пулов, соответствующих вашим фильтрам.")
