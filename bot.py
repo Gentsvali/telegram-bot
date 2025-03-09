@@ -4,6 +4,7 @@ import logging
 import requests
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+import time
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +28,14 @@ FILTERS = {
     "token_type": "SOL",  # Тип токена
     "duration": "1h"      # Срок действия пула
 }
+
+# Кэш для хранения данных о пулах
+POOLS_CACHE = {
+    "last_updated": 0,
+    "data": []
+}
+
+CACHE_EXPIRY = 300  # Кэш действителен 5 минут
 
 def get_pools():
     """
@@ -60,10 +69,37 @@ def filter_pools(pools, filters):
     """
     filtered_pools = []
     for pool in pools:
-        # Пример фильтрации (замените на реальные поля)
-        if float(pool['volume'].replace('$', '').replace(',', '')) >= filters['min_volume']:  # Пример фильтра по объему
-            filtered_pools.append(pool)
+        try:
+            volume = float(pool['volume'].replace('$', '').replace(',', ''))
+            if volume >= filters['min_volume']:
+                filtered_pools.append(pool)
+        except ValueError:
+            logger.warning(f"Invalid volume format for pool: {pool['name']}")
     return filtered_pools
+
+def update_cache():
+    """
+    Обновляет кэш данных о пулах.
+    """
+    global POOLS_CACHE
+    pools = get_pools()
+    if pools:
+        POOLS_CACHE = {
+            "last_updated": time.time(),
+            "data": pools
+        }
+        logger.info("Cache updated successfully.")
+    else:
+        logger.warning("Failed to update cache.")
+
+def get_cached_pools():
+    """
+    Возвращает данные из кэша, если они актуальны.
+    """
+    if time.time() - POOLS_CACHE["last_updated"] > CACHE_EXPIRY:
+        logger.info("Cache expired. Updating...")
+        update_cache()
+    return POOLS_CACHE["data"]
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -89,10 +125,10 @@ def webhook():
             send_message(chat_id, "Привет! Я твой бот. Напиши что-нибудь, и я отвечу.")
         elif text == "/help":
             logger.info("Handling /help command")  # Лог: обработка команды /help
-            send_message(chat_id, "Список команд:\n/start - Начать диалог\n/help - Показать список команд\n/pools - Показать свежие пулы")
+            send_message(chat_id, "Список команд:\n/start - Начать диалог\n/help - Показать список команд\n/pools - Показать свежие пулы\n/status - Показать статус бота\n/set_filters - Настроить фильтры\n/clear_cache - Очистить кэш")
         elif text == "/pools":
             logger.info("Handling /pools command")
-            pools = get_pools()
+            pools = get_cached_pools()
             if pools:
                 filtered_pools = filter_pools(pools, FILTERS)
                 if filtered_pools:
@@ -104,6 +140,27 @@ def webhook():
                     send_message(chat_id, "Нет пулов, соответствующих вашим фильтрам.")
             else:
                 send_message(chat_id, "Не удалось получить данные о пулах.")
+        elif text == "/status":
+            logger.info("Handling /status command")
+            status_message = f"Статус бота:\nКэш обновлен: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(POOLS_CACHE['last_updated']))}\nФильтры: {FILTERS}"
+            send_message(chat_id, status_message)
+        elif text.startswith("/set_filters"):
+            logger.info("Handling /set_filters command")
+            try:
+                args = text.split()[1:]
+                if len(args) == 3:
+                    FILTERS["min_volume"] = float(args[0])
+                    FILTERS["token_type"] = args[1]
+                    FILTERS["duration"] = args[2]
+                    send_message(chat_id, f"Фильтры обновлены: {FILTERS}")
+                else:
+                    send_message(chat_id, "Использование: /set_filters <min_volume> <token_type> <duration>")
+            except Exception as e:
+                send_message(chat_id, f"Ошибка: {e}")
+        elif text == "/clear_cache":
+            logger.info("Handling /clear_cache command")
+            update_cache()
+            send_message(chat_id, "Кэш очищен и обновлен.")
         else:
             logger.info(f"Handling message: {text}")  # Лог: обработка обычного сообщения
             send_message(chat_id, f"Ты написал: {text}")
