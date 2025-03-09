@@ -61,7 +61,7 @@ def filter_pools(pools, filters):
     filtered_pools = []
     for pool in pools:
         # Пример фильтрации (замените на реальные поля)
-        if (float(pool['volume'].replace(',', '')) >= filters['min_volume']:  # Пример фильтра по объему
+        if float(pool['volume'].replace(',', '')) >= filters['min_volume']:  # Пример фильтра по объему
             filtered_pools.append(pool)
     return filtered_pools
 
