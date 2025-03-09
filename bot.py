@@ -64,6 +64,10 @@ def filter_pools(pools, user_id):
         # Фильтр по минимальному объему
         if "min_volume" in filters and pool["volume"] < filters["min_volume"]:
             continue
+        # Фильтр по длительности (если нужен)
+        if "duration" in filters:
+            # Добавьте логику для фильтрации по длительности
+            pass
         filtered_pools.append(pool)
     return filtered_pools
 
@@ -113,15 +117,19 @@ async def handle_message(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     text = update.message.text
 
+    # Инициализация фильтров для пользователя, если их еще нет
+    if user_id not in USER_FILTERS:
+        USER_FILTERS[user_id] = {}
+
     # Сохранение фильтров
     if text.isdigit():
-        USER_FILTERS[user_id] = {"min_volume": float(text)}
+        USER_FILTERS[user_id]["min_volume"] = float(text)  # Добавляем минимальный объем
         await update.message.reply_text(f"Минимальный объем установлен: {text}")
     elif text.upper() in ["SOL", "USDC", "BTC"]:
-        USER_FILTERS[user_id] = {"token_type": text.upper()}
+        USER_FILTERS[user_id]["token_type"] = text.upper()  # Добавляем тип токена
         await update.message.reply_text(f"Тип токена установлен: {text.upper()}")
     elif text.endswith("h"):
-        USER_FILTERS[user_id] = {"duration": text}
+        USER_FILTERS[user_id]["duration"] = text  # Добавляем длительность
         await update.message.reply_text(f"Длительность установлена: {text}")
     else:
         await update.message.reply_text("Неизвестная команда. Используйте кнопки для настройки фильтров.")
