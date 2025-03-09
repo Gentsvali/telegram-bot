@@ -39,9 +39,9 @@ def get_pools():
             soup = BeautifulSoup(response.text, 'html.parser')
             pools = []
             # Пример парсинга (замените на реальные селекторы)
-            for pool in soup.find_all('div', class_='pool'):  # Замените на реальный селектор
-                pool_name = pool.find('h3').text.strip() if pool.find('h3') else "Название неизвестно"
-                pool_volume = pool.find('span', class_='volume').text.strip() if pool.find('span', class_='volume') else "Объем неизвестен"
+            for pool in soup.find_all('div', class_='pool-item'):  # Замените на реальный селектор
+                pool_name = pool.find('p', class_='font-semibold text-title').text.strip() if pool.find('p', class_='font-semibold text-title') else "Название неизвестно"
+                pool_volume = pool.find('span', class_='mt-1 font-semibold text-[28px] text-title').text.strip() if pool.find('span', class_='mt-1 font-semibold text-[28px] text-title') else "Объем неизвестен"
                 pools.append({
                     "name": pool_name,
                     "volume": pool_volume
@@ -61,7 +61,7 @@ def filter_pools(pools, filters):
     filtered_pools = []
     for pool in pools:
         # Пример фильтрации (замените на реальные поля)
-        if float(pool['volume'].replace(',', '')) >= filters['min_volume']:  # Пример фильтра по объему
+        if float(pool['volume'].replace('$', '').replace(',', '')) >= filters['min_volume']:  # Пример фильтра по объему
             filtered_pools.append(pool)
     return filtered_pools
 
