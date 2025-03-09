@@ -1,4 +1,4 @@
-
+from dotenv import load_dotenv
 import requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
