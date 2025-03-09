@@ -15,8 +15,8 @@ app = Flask(__name__)
 
 # Получаем токен и секретный токен из переменных окружения
 TOKEN = os.environ.get("BOT_TOKEN", "7919326998:AAEStNAdjyL3U6KIg3_P9QefPx3_iUe60jI")  # Ваш токен
-SECRET_TOKEN = os.environ.get("SECRET_TOKEN", "your_secret_token_here")  # Секретный токен для вебхука
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://telegram-bot-rb7l.onrender.com/webhook")  # Ваш URL вебхука
+SECRET_TOKEN = os.environ.get("SECRET_TOKEN", "my_super_secret_token_mara5555")  # Секретный токен для вебхука
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://telegram-bot-6gec.onrender.com/webhook")  # Ваш URL вебхука
 
 logger.info(f"TOKEN: {TOKEN}, SECRET_TOKEN: {SECRET_TOKEN}, WEBHOOK_URL: {WEBHOOK_URL}")
 
@@ -88,5 +88,5 @@ def set_webhook():
 
 if __name__ == '__main__':
     set_webhook()  # Устанавливаем вебхук при запуске приложения
-    port = int(os.environ.get("PORT", 8080))  # Используем порт из окружения или 8080 по умолчанию
+    port = int(os.environ.get("PORT", 5000))  # Используем порт из окружения или 5000 по умолчанию
     app.run(host='0.0.0.0', port=port)
