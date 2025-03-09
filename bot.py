@@ -2,8 +2,9 @@ from dotenv import load_dotenv
 import os
 import logging
 import requests
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
+from bs4 import BeautifulSoup
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -15,15 +16,10 @@ load_dotenv()
 # Получаем токен и секретный токен из переменных окружения
 TOKEN = os.environ.get("BOT_TOKEN", "7919326998:AAEStNAdjyL3U6KIg3_P9QefPx3_iUe60jI")  # Ваш токен
 SECRET_TOKEN = os.environ.get("SECRET_TOKEN", "my_super_secret_token_mara5555")  # Секретный токен для вебхука
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://telegram-bot-6gec.onrender.com/webhook")  # Ваш URL вебхука
 
 # Фильтры для пулов (настройки по умолчанию)
 USER_FILTERS = {}  # Словарь для хранения фильтров каждого пользователя
-
-# Клавиатура для фильтров
-FILTER_KEYBOARD = ReplyKeyboardMarkup(
-    [["/set_min_volume", "/set_token_type"], ["/set_duration", "/show_filters"]],
-    resize_keyboard=True,
-)
 
 # Функция для получения пулов
 def get_pools():
@@ -71,28 +67,7 @@ def filter_pools(pools, user_id):
 
 # Команда /start
 async def start(update: Update, context: CallbackContext):
-    await update.message.reply_text(
-        "Привет! Я бот для отслеживания пулов. Используй кнопки ниже для настройки фильтров.",
-        reply_markup=FILTER_KEYBOARD,
-    )
-
-# Команда /set_min_volume
-async def set_min_volume(update: Update, context: CallbackContext):
-    await update.message.reply_text("Введите минимальный объем пула (например, 1000):")
-
-# Команда /set_token_type
-async def set_token_type(update: Update, context: CallbackContext):
-    await update.message.reply_text("Введите тип токена (например, SOL):")
-
-# Команда /set_duration
-async def set_duration(update: Update, context: CallbackContext):
-    await update.message.reply_text("Введите длительность пула (например, 1h):")
-
-# Команда /show_filters
-async def show_filters(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
-    filters = USER_FILTERS.get(user_id, {})
-    await update.message.reply_text(f"Текущие фильтры:\n{filters}")
+    await update.message.reply_text("Привет! Я бот для отслеживания пулов. Используй команду /pools для получения списка пулов.")
 
 # Команда /pools
 async def pools(update: Update, context: CallbackContext):
@@ -136,7 +111,7 @@ async def handle_message(update: Update, context: CallbackContext):
         USER_FILTERS[user_id]["duration"] = text  # Добавляем длительность
         await update.message.reply_text(f"Длительность установлена: {text}")
     else:
-        await update.message.reply_text("Неизвестная команда. Используйте кнопки для настройки фильтров.")
+        await update.message.reply_text("Неизвестная команда. Используйте команду /pools для получения списка пулов.")
 
 # Запуск бота
 def main():
@@ -144,15 +119,16 @@ def main():
 
     # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("set_min_volume", set_min_volume))
-    application.add_handler(CommandHandler("set_token_type", set_token_type))
-    application.add_handler(CommandHandler("set_duration", set_duration))
-    application.add_handler(CommandHandler("show_filters", show_filters))
     application.add_handler(CommandHandler("pools", pools))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Запуск бота
-    application.run_polling()
+    # Установка вебхука
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=10000,  # Порт, который слушает Render
+        url_path=TOKEN,
+        webhook_url=WEBHOOK_URL,
+    )
 
 if __name__ == '__main__':
     main()
