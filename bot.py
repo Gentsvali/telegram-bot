@@ -36,7 +36,7 @@ WEBHOOK_URL = f"{WEBHOOK_BASE}/{TOKEN}"
 
 # Конфигурация API
 API_URLS = {
-    "meteora_pools": "https://app.meteora.ag/api/pools/all",
+    "meteora_pools": "https://api.meteora.ag/v2/pools",  # Новый эндпоинт
     "dexscreener": "https://api.dexscreener.com/latest/dex/pairs/solana/{address}",
 }
 
@@ -182,23 +182,26 @@ async def save_filter_value(update: Update, context: CallbackContext):
 
 async def fetch_pools():
     try:
-        logger.info("Запрос к API Meteora...")
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
                 API_URLS["meteora_pools"],
                 headers={"User-Agent": "Mozilla/5.0"}
             )
-            logger.info(f"Статус ответа API: {response.status_code}")
             
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"Получено {len(data)} пулов")
-                logger.debug(f"Первые 3 пула: {data[:3]}")  # Для отладки
-                return data
-            logger.error(f"Ошибка API: {response.text[:200]}")
-            return []
+            if response.status_code != 200:
+                logger.error(f"API Error: {response.status_code} - {response.text}")
+                return []
+
+            data = response.json()
+            if not isinstance(data, list):
+                logger.error("Некорректный формат данных от API")
+                return []
+
+            logger.info(f"Получено {len(data)} пулов")
+            return data
+            
     except Exception as e:
-        logger.error(f"Ошибка получения пулов: {str(e)}")
+        logger.error(f"Ошибка: {str(e)}")
         return []
 
 async def format_pool_message(pool):
