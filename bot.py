@@ -229,8 +229,23 @@ async def track_new_pools(context: CallbackContext):
     except Exception as e:
         logger.error(f"Ошибка в track_new_pools: {e}")
 
+# ... (остальной код без изменений)
+
 def main():
+    # Автоматическая регистрация вас в системе
+    YOUR_USER_ID = 839443665
+    if not db.get_user_filters(YOUR_USER_ID):
+        db.update_user_filters(YOUR_USER_ID, {
+            "min_tvl": 1000,     # Минимальный TVL $1000
+            "max_bin_step": 5,   # Макс. шаг бина 5%
+            "token_type": "SOL"  # Токены типа SOL
+        })
+        logger.info(f"Зарегистрирован пользователь {YOUR_USER_ID}")
+
+    # Инициализация бота
     application = Application.builder().token(TOKEN).build()
+    
+    # ... (остальной код без изменений)
     
     # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
