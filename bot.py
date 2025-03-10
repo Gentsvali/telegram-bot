@@ -27,7 +27,7 @@ SECRET_TOKEN = os.getenv("SECRET_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 API_URLS = {
-    "meteora_pools": "https://app.meteora.ag/api/pools",
+    "meteora_pools": "https://app.meteora.ag/api/pools/all",
     "dexscreener": "https://api.dexscreener.com/latest/dex/pairs/solana/{address}",
 }
 
@@ -141,7 +141,10 @@ async def fetch_pools(filters):
     """
     Получает список пулов из API Meteora с учетом фильтров.
     """
-    try:
+    try: 
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
         response = requests.get(
             API_URLS["meteora_pools"],
             params={
@@ -149,11 +152,11 @@ async def fetch_pools(filters):
                 "max_bin_step": filters.get("max_bin_step", 100),
                 "token_type": filters.get("token_type", "SOL"),
             },
+            headers=headers,  # Добавляем заголовки
+            timeout=10,       # Таймаут на случай долгого ответа
         )
         if response.status_code == 200:
-            return response.json().get("data", [])
-        else:
-            logger.error(f"Ошибка при запросе к API Meteora: {response.status_code}")
+            logger.error(f"Ошибка API Meteora: {response.status_code} - {response.text}")  # Логируем текст ошибки
             return []
     except Exception as e:
         logger.error(f"Ошибка в fetch_pools: {e}")
