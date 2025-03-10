@@ -1,4 +1,4 @@
 python-dotenv==1.0.0
-python-telegram-bot[webhooks]==20.5
+python-telegram-bot[webhooks]==20.6  # Исправлено с 20.5 → 20.6
 httpx==0.26.0
 apscheduler==3.10.4
