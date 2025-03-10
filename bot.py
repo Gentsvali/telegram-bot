@@ -22,10 +22,16 @@ logger = logging.getLogger(__name__)
 # Загрузка переменных окружения
 load_dotenv()
 
+# Загрузка переменных окружения
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 SECRET_TOKEN = os.getenv("SECRET_TOKEN")
-PORT = int(os.environ.get("PORT", 8080))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL") + TOKEN
+WEBHOOK_BASE = os.getenv("WEBHOOK_URL")
+
+# Проверка наличия всех переменных
+if not all([TOKEN, SECRET_TOKEN, WEBHOOK_BASE]):
+    raise EnvironmentError("Не заданы обязательные переменные окружения!")
+
+WEBHOOK_URL = f"{WEBHOOK_BASE}/{TOKEN}"
 
 API_URLS = {
     "meteora_pools": "https://app.meteora.ag/api/pools/all",
