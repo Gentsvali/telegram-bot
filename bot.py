@@ -138,14 +138,18 @@ async def save_filter_value(update: Update, context: CallbackContext):
 
 # Отслеживание новых пулов
 async def track_new_pools(context: CallbackContext):
-    all_pools = fetch_pools({})  # Получаем все пулы
-    for user_id in get_all_users():
-        filters = get_user_filters(user_id)
-        filtered_pools = filter_pools(all_pools, filters)
-        for pool in filtered_pools:
-            message = format_pool_message(pool)
-            if message:
-                await context.bot.send_message(user_id, message, disable_web_page_preview=True)
+    logger.info("Запуск задачи track_new_pools")
+    try:
+        all_pools = fetch_pools({})  # Получаем все пулы
+        for user_id in get_all_users():
+            filters = get_user_filters(user_id)
+            filtered_pools = filter_pools(all_pools, filters)
+            for pool in filtered_pools:
+                message = format_pool_message(pool)
+                if message:
+                    await context.bot.send_message(user_id, message, disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"Ошибка в track_new_pools: {e}")
 
 # Получение всех пользователей из базы данных
 def get_all_users():
@@ -180,13 +184,17 @@ def main():
     job_queue = application.job_queue
     job_queue.run_repeating(track_new_pools, interval=300.0, first=10.0)  # Проверка каждые 5 минут
 
-    # Запуск бота
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8080)),
-        webhook_url=WEBHOOK_URL,
-        secret_token=SECRET_TOKEN,
-    )
+    # Запуск бота с обработкой ошибок
+    logger.info("Бот запущен и ожидает обновлений")
+    try:
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 8080)),
+            webhook_url=WEBHOOK_URL,
+            secret_token=SECRET_TOKEN,
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
 
 if __name__ == "__main__":
     main()
