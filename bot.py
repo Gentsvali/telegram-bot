@@ -136,16 +136,71 @@ async def save_filter_value(update: Update, context: CallbackContext):
     update_user_filters(user_id, current_filters)
     await update.message.reply_text("Значение сохранено!", reply_markup=get_filter_keyboard())
 
+# Получение списка пулов из API Meteora
+async def fetch_pools(filters):
+    """
+    Получает список пулов из API Meteora с учетом фильтров.
+    """
+    try:
+        response = requests.get(
+            API_URLS["meteora_pools"],
+            params={
+                "min_tvl": filters.get("min_tvl", 0),
+                "max_bin_step": filters.get("max_bin_step", 100),
+                "token_type": filters.get("token_type", "SOL"),
+            },
+        )
+        if response.status_code == 200:
+            return response.json().get("data", [])
+        else:
+            logger.error(f"Ошибка при запросе к API Meteora: {response.status_code}")
+            return []
+    except Exception as e:
+        logger.error(f"Ошибка в fetch_pools: {e}")
+        return []
+
+# Форматирование сообщения о пуле
+async def format_pool_message(pool):
+    """
+    Форматирует сообщение о пуле для отправки пользователю.
+    """
+    try:
+        dex_data = requests.get(
+            API_URLS["dexscreener"].format(address=pool["address"])
+        ).json().get("pair", {})
+        
+        return (
+            f"⭐️ {pool['base_token']['symbol']} ({pool['links']['dexscreener']})-SOL\n"
+            f"🐊 gmgn ({pool['links']['gmgn']})\n\n"
+            f"☄️ Meteora ({pool['links']['meteora']})\n"
+            f"🦅 Dexscreener ({pool['links']['dexscreener']})\n\n"
+            f"😼 Bundles ({pool['links']['bundles']})   "
+            f"💼 Smart wallets ({pool['links']['smart_wallets']})\n\n"
+            f"🟢 TVL - {dex_data.get('liquidity', {}).get('usd', 'Unknown')}$\n"
+            f"🟣 Bin Step - {pool['bin_step']}  "
+            f"🟡 Base Fee - {pool['fees']['base']} %\n"
+            f"💸️ Fees 5min - {dex_data.get('fees5m', 'Unknown')}$  "
+            f"▫️ Trade Volume 5min - {dex_data.get('volume5m', 'Unknown')}$\n"
+            f"💵️ Fee 1h - {dex_data.get('fees1h', 'Unknown')}  "
+            f"▪️ Trade Volume 1h - {dex_data.get('volume1h', 'Unknown')}\n"
+            f"🔸 Fee 24h/TVL - {pool['metrics']['fee24h_tvl']}%  "
+            f"🔹 Dynamic 1h Fee/TVL - {pool['metrics']['dynamic_fee1h_tvl']}%\n\n"
+            f"{pool['address']}"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка форматирования пула: {e}")
+        return None
+
 # Отслеживание новых пулов
 async def track_new_pools(context: CallbackContext):
     logger.info("Запуск задачи track_new_pools")
     try:
-        all_pools = fetch_pools({})  # Получаем все пулы
+        all_pools = await fetch_pools({})  # Получаем все пулы
         for user_id in get_all_users():
             filters = get_user_filters(user_id)
             filtered_pools = filter_pools(all_pools, filters)
             for pool in filtered_pools:
-                message = format_pool_message(pool)
+                message = await format_pool_message(pool)
                 if message:
                     await context.bot.send_message(user_id, message, disable_web_page_preview=True)
     except Exception as e:
