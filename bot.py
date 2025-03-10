@@ -83,7 +83,7 @@ db = Database()
 
 def get_filter_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Минимальный TVL", callback_data="set_min_tvl"),
+        [InlineKeyboardButton("Минимальный TVL", callback_data="set_min_tvl")],  # Исправлено: добавлена закрывающая скобка
         [InlineKeyboardButton("Максимальный Bin Step", callback_data="set_max_bin_step")],
         [InlineKeyboardButton("Тип токена", callback_data="set_token_type")],
         [InlineKeyboardButton("Сохранить и выйти", callback_data="save_filters")],
@@ -91,119 +91,55 @@ def get_filter_keyboard():
 
 async def start(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
-    if not db.get_user_filters(user_id):
-        db.update_user_filters(user_id, {})
-    await update.message.reply_text(
-        "Привет! Я бот для отслеживания новых пулов Meteora.\n"
-        "Используйте /filters для настройки параметров поиска."
-    )
-
-async def filters_command(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
-    filters = db.get_user_filters(user_id)
-    
-    text = (
-        f"Текущие фильтры:\n"
-        f"• Минимальный TVL: {filters['min_tvl']}\n"
-        f"• Максимальный Bin Step: {filters['max_bin_step']}\n"
-        f"• Тип токена: {filters['token_type']}\n\n"
-        "Используйте кнопки ниже для настройки:"
-    )
-    
-    await update.message.reply_text(text, reply_markup=get_filter_keyboard())
-
-async def button_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "save_filters":
-        await query.edit_message_text("✅ Фильтры сохранены!")
-        return
-        
-    context.user_data["awaiting_input"] = query.data
-    await query.edit_message_text("✏️ Введите новое значение:")
-
-async def save_filter_value(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
-    text = update.message.text.strip()
-    current_filters = db.get_user_filters(user_id)
-    
-    converters = {
-        "set_min_tvl": ("min_tvl", float),
-        "set_max_bin_step": ("max_bin_step", int),
-        "set_token_type": ("token_type", str.upper)
-    }
-    
-    key, converter = converters.get(context.user_data.get("awaiting_input"), (None, None))
-    
-    if not key or not converter:
-        return await update.message.reply_text("❌ Ошибка обработки запроса")
-    
     try:
-        converted_value = converter(text)
-        current_filters[key] = converted_value
-        db.update_user_filters(user_id, current_filters)
-        await update.message.reply_text("✅ Значение сохранено!", reply_markup=get_filter_keyboard())
-    except ValueError:
-        await update.message.reply_text("❌ Некорректный формат значения!")
-    except Exception as e:
-        logger.error(f"Ошибка сохранения фильтра: {e}")
-        await update.message.reply_text("⚠️ Произошла ошибка при сохранении")
-
-async def fetch_pools():
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.get(
-                API_URLS["meteora_pools"],
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
-            
-            if response.status_code != 200:
-                logger.error(f"Meteora API Error: {response.status_code} - {response.text[:200]}")
-                return []
-                
-            data = response.json()
-            logger.info(f"Получено {len(data)} пулов от API")
-            return data
-            
-    except Exception as e:
-        logger.error(f"Ошибка получения пулов: {str(e)}")
-        return []
-
-async def format_pool_message(pool):
-    try:
-        address = pool.get("address", "")
-        async with httpx.AsyncClient(timeout=10) as client:
-            dex_response = await client.get(
-                API_URLS["dexscreener"].format(address=address)
-            )
-            dex_data = dex_response.json().get("pair", {})
-        
-        return (
-            f"🔹 {pool.get('base_token', {}).get('symbol', 'N/A')}\n"
-            f"• TVL: {dex_data.get('liquidity', {}).get('usd', 'N/A')}$\n"
-            f"• Bin Step: {pool.get('bin_step', 'N/A')}\n"
-            f"• Тип: {pool.get('token_type', 'N/A')}\n"
-            f"• Адрес: {address[:15]}...\n"
-            f"📊 DexScreener: {pool.get('links', {}).get('dexscreener', '#')}"
+        if not db.get_user_filters(user_id):
+            db.update_user_filters(user_id, {})
+            logger.info(f"Новый пользователь зарегистрирован: {user_id}")
+        await update.message.reply_text(
+            "Привет! Я бот для отслеживания новых пулов Meteora.\n"
+            "Используйте /filters для настройки параметров поиска."
         )
     except Exception as e:
-        logger.error(f"Ошибка форматирования: {e}")
-        return None
+        logger.error(f"Ошибка в команде /start: {e}")
+        await update.message.reply_text("⚠️ Произошла ошибка при регистрации")
+
+async def filters_command(update: Update, context: CallbackContext):
+    try:
+        user_id = update.message.from_user.id
+        filters = db.get_user_filters(user_id)
+        
+        text = (
+            f"Текущие фильтры:\n"
+            f"• Минимальный TVL: {filters['min_tvl']}\n"
+            f"• Максимальный Bin Step: {filters['max_bin_step']}\n"
+            f"• Тип токена: {filters['token_type']}\n\n"
+            "Используйте кнопки ниже для настройки:"
+        )
+        
+        await update.message.reply_text(text, reply_markup=get_filter_keyboard())
+    except Exception as e:
+        logger.error(f"Ошибка в команде /filters: {e}")
+        await update.message.reply_text("⚠️ Не удалось загрузить настройки")
 
 async def track_new_pools(context: CallbackContext):
-    logger.info("Запуск проверки новых пулов")
     try:
+        logger.info("Запуск проверки новых пулов")
+        
+        # Получение пулов
         all_pools = await fetch_pools()
+        logger.info(f"Получено {len(all_pools)} пулов от API")
+        
         if not all_pools:
+            logger.warning("Нет данных для обработки")
             return
             
+        # Получение пользователей
         cursor = db.conn.cursor()
         cursor.execute("SELECT user_id FROM user_filters")
         users = [row[0] for row in cursor.fetchall()]
+        logger.info(f"Найдено {len(users)} пользователей")
         
-        logger.info(f"Обработка {len(users)} пользователей")
-        
+        # Отправка уведомлений
         for user_id in users:
             filters = db.get_user_filters(user_id)
             filtered = [
@@ -213,61 +149,64 @@ async def track_new_pools(context: CallbackContext):
                 and str(pool.get("token_type", "")).upper() == filters["token_type"]
             ]
             
-            logger.info(f"Для {user_id} найдено {len(filtered)} пулов")
+            logger.info(f"Для {user_id} найдено {len(filtered)} подходящих пулов")
             
-            for pool in filtered[:5]:  # Лимит 5 пулов на пользователя
-                if message := await format_pool_message(pool):
+            for pool in filtered[:5]:
+                message = await format_pool_message(pool)
+                if message:
                     try:
                         await context.bot.send_message(
                             user_id,
                             message,
                             disable_web_page_preview=True
                         )
+                        logger.info(f"Успешно отправлено сообщение пользователю {user_id}")
                     except Exception as e:
-                        logger.error(f"Ошибка отправки: {user_id} - {e}")
-            
+                        logger.error(f"Ошибка отправки для {user_id}: {e}")
+                else:
+                    logger.warning("Пустое сообщение для пула")
+                    
     except Exception as e:
-        logger.error(f"Ошибка в track_new_pools: {e}")
-
-# ... (остальной код без изменений)
+        logger.error(f"Критическая ошибка в track_new_pools: {e}")
 
 def main():
-    # Автоматическая регистрация вас в системе
-    YOUR_USER_ID = 839443665
-    if not db.get_user_filters(YOUR_USER_ID):
+    try:
+        # Принудительная регистрация пользователя
+        YOUR_USER_ID = 839443665
         db.update_user_filters(YOUR_USER_ID, {
-            "min_tvl": 1000,     # Минимальный TVL $1000
-            "max_bin_step": 5,   # Макс. шаг бина 5%
-            "token_type": "SOL"  # Токены типа SOL
+            "min_tvl": 1000,
+            "max_bin_step": 5,
+            "token_type": "SOL"
         })
-        logger.info(f"Зарегистрирован пользователь {YOUR_USER_ID}")
+        logger.info(f"Основной пользователь {YOUR_USER_ID} зарегистрирован")
 
-    # Инициализация бота
-    application = Application.builder().token(TOKEN).build()
-    
-    # ... (остальной код без изменений)
-    
-    # Регистрация обработчиков
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("filters", filters_command))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, save_filter_value))
-    
-    # Планировщик задач
-    application.job_queue.run_repeating(
-        track_new_pools,
-        interval=300.0,
-        first=10.0
-    )
-    
-    # Запуск вебхука
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=WEBHOOK_URL,
-        secret_token=SECRET_TOKEN,
-        drop_pending_updates=True
-    )
+        # Инициализация бота
+        application = Application.builder().token(TOKEN).build()
+        
+        # Регистрация обработчиков
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("filters", filters_command))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, save_filter_value))
+        
+        # Планировщик задач
+        application.job_queue.run_repeating(
+            track_new_pools,
+            interval=300.0,
+            first=10.0
+        )
+        
+        # Запуск вебхука
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=WEBHOOK_URL,
+            secret_token=SECRET_TOKEN,
+            drop_pending_updates=True
+        )
+        
+    except Exception as e:
+        logger.critical(f"Фатальная ошибка при запуске: {e}")
 
 if __name__ == "__main__":
     main()
