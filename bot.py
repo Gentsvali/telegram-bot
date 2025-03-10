@@ -26,6 +26,15 @@ API_URLS = {
 
 USER_FILTERS = {}
 
+# Добавляем функцию start
+async def start(update: Update, context: CallbackContext):
+    await update.message.reply_text(
+        "Привет! Я ваш бот. Используйте команды:\n"
+        "/pools - показать пулы\n"
+        "/setfilter [параметр] [значение] - установить фильтр\n"
+        "Пример: /setfilter min_tvl 1000"
+    )
+
 async def format_pool_message(pool):
     try:
         dex_data = requests.get(
@@ -114,10 +123,12 @@ async def set_filter(update: Update, context: CallbackContext):
 def main():
     application = Application.builder().token(TOKEN).build()
 
+    # Регистрируем обработчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("pools", pools))
     application.add_handler(CommandHandler("setfilter", set_filter))
 
+    # Запускаем вебхук
     application.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get('PORT', 8080)),
