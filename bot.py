@@ -152,7 +152,7 @@ async def track_new_pools(user_id):
         # Обновляем список последних пулов
         last_pools = filtered_pools
     else:
-        logger.info("Новых пулов не обнаружено"))
+        logger.info("Новых пулов не обнаружено")
 
 # Функция для отправки сообщений в Telegram                                             from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
