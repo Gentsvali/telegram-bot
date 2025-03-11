@@ -1,3 +1,51 @@
+import sqlite3
+
+# Инициализация базы данных
+def init_db():
+    conn = sqlite3.connect("user_settings.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id INTEGER PRIMARY KEY,
+            min_tvl REAL DEFAULT 0,
+            max_tvl REAL DEFAULT 1000000,
+            min_fees REAL DEFAULT 0,
+            max_fees REAL DEFAULT 100
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+# Получение настроек пользователя
+def get_user_settings(user_id):
+    conn = sqlite3.connect("user_settings.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
+    settings = cursor.fetchone()
+    conn.close()
+    if settings:
+        return {
+            "min_tvl": settings[1],
+            "max_tvl": settings[2],
+            "min_fees": settings[3],
+            "max_fees": settings[4],
+        }
+    return None
+
+# Обновление настроек пользователя
+def update_user_settings(user_id, min_tvl=None, max_tvl=None, min_fees=None, max_fees=None):
+    conn = sqlite3.connect("user_settings.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO user_settings (user_id, min_tvl, max_tvl, min_fees, max_fees)
+        VALUES (?, ?, ?, ?, ?)
+    """, (user_id, min_tvl, max_tvl, min_fees, max_fees))
+    conn.commit()
+    conn.close()
+
+# Инициализация базы данных при запуске
+init_db()
+
 import os
 import logging
 from datetime import datetime
@@ -55,49 +103,96 @@ async def get_dexscreener_pool(address: str):
         return None
 
 # Функция для проверки новых пулов
-async def track_new_pools():
+async def track_new_pools(user_id):
     global last_pools
     logger.info("Запуск проверки новых пулов")
     
-    # Получаем текущие пулы от Meteora
+    # Получаем настройки пользователя
+    settings = get_user_settings(user_id)
+    if not settings:
+        settings = {
+            "min_tvl": 0,
+            "max_tvl": float("inf"),
+            "min_fees": 0,
+            "max_fees": float("inf"),
+        }
+
+    # Получаем текущие пулы
     current_pools = await get_meteora_pools()
     if not current_pools:
         logger.warning("Нет данных для обработки от Meteora")
         return
 
-    # Фильтруем пулы, связанные с Solana
-    solana_pools = [pool for pool in current_pools if pool.get("chain") == "Solana"]
+    # Фильтруем пулы по критериям
+    filtered_pools = [
+        pool for pool in current_pools
+        if settings["min_tvl"] <= pool.get("tvl", 0) <= settings["max_tvl"]
+        and settings["min_fees"] <= pool.get("fees", 0) <= settings["max_fees"]
+    ]
 
     # Находим новые пулы
-    new_pools = [pool for pool in solana_pools if pool not in last_pools]
+    new_pools = [pool for pool in filtered_pools if pool not in last_pools]
 
     if new_pools:
         logger.info(f"Найдено {len(new_pools)} новых пулов")
         # Отправляем уведомление в Telegram
         for pool in new_pools:
-            # Получаем дополнительную информацию о пуле от DexScreener
-            dexscreener_data = await get_dexscreener_pool(pool.get("address"))
-            if dexscreener_data:
-                message = (
-                    f"🎉 Новый пул на платформе Meteor!\n"
-                    f"🔗 Пара: {pool.get('pair')}\n"
-                    f"📊 Объем: {dexscreener_data.get('volume', 'N/A')}\n"
-                    f"⏳ Время добавления: {pool.get('timestamp')}"
-                )
-            else:
-                message = (
-                    f"🎉 Новый пул на платформе Meteor!\n"
-                    f"🔗 Пара: {pool.get('pair')}\n"
-                    f"⏳ Время добавления: {pool.get('timestamp')}"
-                )
-            await send_telegram_message(message)
+            message = (
+                f"🔥 Обнаружены пулы с высокой доходностью 🔥\n\n"
+                f"🔥 {pool.get('pair')} (https://t.me/meteora_pool_tracker_bot/?start=pool_info={pool.get('address')}) | создан ~{pool.get('age')} назад | RugCheck: 🟢1 (https://rugcheck.xyz/tokens/{pool.get('token_address')})\n"
+                f"🔗 Meteora (https://app.meteora.ag/dlmm/{pool.get('address')}) | DexScreener (https://dexscreener.com/solana/{pool.get('address')}) | GMGN (https://gmgn.ai/sol/token/{pool.get('token_address')}) | TrenchRadar (https://trench.bot/bundles/{pool.get('token_address')}?all=true)\n"
+                f"💎 Market Cap: ${pool.get('market_cap', 'N/A')} 🔹TVL: ${pool.get('tvl', 'N/A')}\n"
+                f"📊 Объем: ${pool.get('volume', 'N/A')} 🔸 Bin Step: {pool.get('bin_step', 'N/A')} 💵 Fees: {pool.get('fees', 'N/A')} | {pool.get('dynamic_fee', 'N/A')}\n"
+                f"🤑 Принт (5m dynamic fee/TVL): {pool.get('print_rate', 'N/A')}\n"
+                f"🪙 Токен (https://t.me/meteora_pool_tracker_bot/?start=pools={pool.get('token_address')}): {pool.get('token_address')}\n"
+                f"🤐 Mute 1h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_1h) | Mute 24h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_24h) | Mute forever (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_forever)"
+            )
+            await send_telegram_message(user_id, message)
         
         # Обновляем список последних пулов
-        last_pools = solana_pools
+        last_pools = filtered_pools
     else:
-        logger.info("Новых пулов не обнаружено")
+        logger.info("Новых пулов не обнаружено"))
 
-# Функция для отправки сообщений в Telegram
+# Функция для отправки сообщений в Telegram                                             from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+
+# Обработчик для кнопки "Настройки"
+async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    keyboard = [
+        [InlineKeyboardButton("Минимальный TVL", callback_data="set_min_tvl")],
+        [InlineKeyboardButton("Максимальный TVL", callback_data="set_max_tvl")],
+        [InlineKeyboardButton("Минимальные Fees", callback_data="set_min_fees")],
+        [InlineKeyboardButton("Максимальные Fees", callback_data="set_max_fees")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("⚙️ Настройки фильтров:", reply_markup=reply_markup)
+
+# Обработчик для callback-запросов
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+
+    if data.startswith("set_"):
+        await query.message.reply_text(f"Введите новое значение для {data[4:]}:")
+        context.user_data["awaiting_input"] = data
+    await query.answer()
+
+# Обработчик для текстовых сообщений (ввод настроек)
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text
+
+    if "awaiting_input" in context.user_data:
+        setting = context.user_data["awaiting_input"]
+        try:
+            value = float(text)
+            update_user_settings(user_id, **{setting: value})
+            await update.message.reply_text(f"✅ Настройка {setting} обновлена: {value}")
+            del context.user_data["awaiting_input"]
+        except ValueError:
+            await update.message.reply_text("❌ Ошибка: введите число.")
 async def send_telegram_message(message: str):
     try:
         application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -111,16 +206,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Основная функция
 def main():
-    # Инициализация бота
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Регистрация команд
+    # Команды
     application.add_handler(CommandHandler("start", start))
 
-    # Настройка планировщика
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(track_new_pools, "interval", minutes=5)
-    scheduler.start()
+    # Обработчики кнопок
+    application.add_handler(MessageHandler(filters.Text("Проверить пулы"), check_pools))
+    application.add_handler(MessageHandler(filters.Text("Настройки"), settings))
+    application.add_handler(MessageHandler(filters.Text("Помощь"), help_command))
+
+    # Обработчики callback-запросов и текстовых сообщений
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Запуск бота
     application.run_polling()
