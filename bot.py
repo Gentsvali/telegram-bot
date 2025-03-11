@@ -162,9 +162,22 @@ async def send_telegram_message(user_id: int, message: str):
     except Exception as e:
         logger.error(f"Ошибка отправки сообщения в Telegram: {e}")
 
+from telegram import ReplyKeyboardMarkup
+
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Бот запущен и отслеживает новые пулы на платформе Meteor!")
+    # Создаем клавиатуру с кнопками
+    keyboard = [
+        ["Проверить пулы"],
+        ["Настройки", "Помощь"],
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+    # Отправляем сообщение с клавиатурой
+    await update.message.reply_text(
+        "Бот запущен и отслеживает новые пулы на платформе Meteor!",
+        reply_markup=reply_markup
+    )
 
 # Обработчик для кнопки "Проверить пулы"
 async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
