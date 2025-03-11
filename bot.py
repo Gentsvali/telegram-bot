@@ -154,7 +154,22 @@ async def track_new_pools(user_id):
     else:
         logger.info("Новых пулов не обнаружено")
 
-# Функция для отправки сообщений в Telegram                                             from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+# Функция для отправки сообщений в Telegram
+async def send_telegram_message(user_id: int, message: str):
+    try:
+        application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+        await application.bot.send_message(chat_id=user_id, text=message)
+    except Exception as e:
+        logger.error(f"Ошибка отправки сообщения в Telegram: {e}")
+
+# Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Бот запущен и отслеживает новые пулы на платформе Meteor!")
+
+# Обработчик для кнопки "Проверить пулы"
+async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔄 Проверяю новые пулы...")
+    await track_new_pools(update.message.from_user.id)
 
 # Обработчик для кнопки "Настройки"
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -193,16 +208,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data["awaiting_input"]
         except ValueError:
             await update.message.reply_text("❌ Ошибка: введите число.")
-async def send_telegram_message(message: str):
-    try:
-        application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-        await application.bot.send_message(chat_id=CHAT_ID, text=message)
-    except Exception as e:
-        logger.error(f"Ошибка отправки сообщения в Telegram: {e}")
 
-# Команда /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Бот запущен и отслеживает новые пулы на платформе Meteor!")
+# Обработчик для команды "Помощь"
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("ℹ️ Помощь:\n"
+                                   "Используйте кнопки для взаимодействия с ботом.\n"
+                                   "Если что-то не работает, напишите /start.")
 
 # Основная функция
 def main():
