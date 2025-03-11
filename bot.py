@@ -142,11 +142,16 @@ def main():
         # Добавляем обработчик ошибок
         application.add_error_handler(error_handler)
         
-        # ... остальная часть main() без изменений ...
+        # ... остальная часть main() ...
+    except Exception as e:
+        logger.critical(f"Фатальная ошибка при запуске: {e}")
 
 async def error_handler(update: object, context: CallbackContext) -> None:
     """Обработчик неотловленных исключений"""
-    logger.error(msg="Исключение в обработчике", exc_info=context.error)
+    try:
+        logger.error(msg="Исключение в обработчике", exc_info=context.error)
+    except Exception as e:
+        logger.error(f"Ошибка в обработчике ошибок: {e}")
 
 if __name__ == "__main__":
     main()
