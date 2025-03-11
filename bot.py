@@ -162,8 +162,6 @@ async def send_telegram_message(user_id: int, message: str):
     except Exception as e:
         logger.error(f"Ошибка отправки сообщения в Telegram: {e}")
 
-from telegram import ReplyKeyboardMarkup
-
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Создаем клавиатуру с кнопками
@@ -186,26 +184,28 @@ async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Обработчик для кнопки "Настройки"
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+    # Создаем клавиатуру с кнопками для настроек
     keyboard = [
-        [InlineKeyboardButton("Минимальный TVL", callback_data="set_min_tvl")],
-        [InlineKeyboardButton("Максимальный TVL", callback_data="set_max_tvl")],
-        [InlineKeyboardButton("Минимальные Fees", callback_data="set_min_fees")],
-        [InlineKeyboardButton("Максимальные Fees", callback_data="set_max_fees")],
+        ["TVL", "Fees"],
+        ["Назад"],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("⚙️ Настройки фильтров:", reply_markup=reply_markup)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# Обработчик для callback-запросов
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
+    # Отправляем сообщение с клавиатурой
+    await update.message.reply_text(
+        "⚙️ Выберите параметр для настройки:",
+        reply_markup=reply_markup
+    )
 
-    if data.startswith("set_"):
-        await query.message.reply_text(f"Введите новое значение для {data[4:]}:")
-        context.user_data["awaiting_input"] = data
-    await query.answer()
+# Обработчик для кнопки "TVL"
+async def set_tvl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введите минимальное значение TVL:")
+    context.user_data["awaiting_input"] = "min_tvl"
+
+# Обработчик для кнопки "Fees"
+async def set_fees(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введите минимальное значение Fees:")
+    context.user_data["awaiting_input"] = "min_fees"
 
 # Обработчик для текстовых сообщений (ввод настроек)
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -216,11 +216,51 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         setting = context.user_data["awaiting_input"]
         try:
             value = float(text)
-            update_user_settings(user_id, **{setting: value})
-            await update.message.reply_text(f"✅ Настройка {setting} обновлена: {value}")
-            del context.user_data["awaiting_input"]
+            if setting == "min_tvl":
+                context.user_data["min_tvl"] = value
+                await update.message.reply_text("Теперь введите максимальное значение TVL:")
+                context.user_data["awaiting_input"] = "max_tvl"
+            elif setting == "max_tvl":
+                context.user_data["max_tvl"] = value
+                await update.message.reply_text("Настройки TVL сохранены.")
+                await save_settings(update, context)
+            elif setting == "min_fees":
+                context.user_data["min_fees"] = value
+                await update.message.reply_text("Теперь введите максимальное значение Fees:")
+                context.user_data["awaiting_input"] = "max_fees"
+            elif setting == "max_fees":
+                context.user_data["max_fees"] = value
+                await update.message.reply_text("Настройки Fees сохранены.")
+                await save_settings(update, context)
         except ValueError:
             await update.message.reply_text("❌ Ошибка: введите число.")
+
+# Сохранение настроек
+async def save_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    min_tvl = context.user_data.get("min_tvl")
+    max_tvl = context.user_data.get("max_tvl")
+    min_fees = context.user_data.get("min_fees")
+    max_fees = context.user_data.get("max_fees")
+
+    if min_tvl is not None and max_tvl is not None and min_fees is not None and max_fees is not None:
+        update_user_settings(user_id, min_tvl, max_tvl, min_fees, max_fees)
+        await update.message.reply_text("✅ Настройки успешно сохранены.")
+        await show_main_menu(update, context)
+    else:
+        await update.message.reply_text("❌ Ошибка: не все настройки введены.")
+
+# Показ главного меню
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        ["Проверить пулы"],
+        ["Настройки", "Помощь"],
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text(
+        "Главное меню:",
+        reply_markup=reply_markup
+    )
 
 # Обработчик для команды "Помощь"
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -238,10 +278,12 @@ def main():
     # Обработчики кнопок
     application.add_handler(MessageHandler(filters.Text("Проверить пулы"), check_pools))
     application.add_handler(MessageHandler(filters.Text("Настройки"), settings))
+    application.add_handler(MessageHandler(filters.Text("TVL"), set_tvl))
+    application.add_handler(MessageHandler(filters.Text("Fees"), set_fees))
+    application.add_handler(MessageHandler(filters.Text("Назад"), show_main_menu))
     application.add_handler(MessageHandler(filters.Text("Помощь"), help_command))
 
-    # Обработчики callback-запросов и текстовых сообщений
-    application.add_handler(CallbackQueryHandler(handle_callback))
+    # Обработчики текстовых сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Запуск бота
