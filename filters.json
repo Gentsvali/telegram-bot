@@ -1,0 +1,49 @@
+{
+  "kind": "filter",
+  "name": "Новый пул для мелкокапов",
+  "conditions": [
+    {
+      "max": 10,
+      "min": 0.4,
+      "type": "range",
+      "param": "pair.baseFee"
+    },
+    {
+      "type": "comparison",
+      "param1": "dynamicFee.value",
+      "param2": "pair.baseFee",
+      "operator": ">=",
+      "multiplier": 1.2
+    },
+    {
+      "max": 100000,
+      "min": 2000,
+      "type": "range",
+      "param": "additional.liquidity"
+    },
+    {
+      "max": 100000000000,
+      "min": 200000,
+      "type": "range",
+      "param": "tokenX.marketCap"
+    },
+    {
+      "max": 300000000,
+      "min": 10000,
+      "type": "range",
+      "param": "pair.volume24h"
+    },
+    {
+      "max": 300000,
+      "min": 2000,
+      "type": "range",
+      "param": "pair.volume10m"
+    },
+    {
+      "max": 100000,
+      "min": 10,
+      "type": "range",
+      "param": "pair.apr"
+    }
+  ]
+}

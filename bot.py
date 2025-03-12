@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import os
 import logging
@@ -11,7 +12,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-import requests
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Инициализация базы данных
@@ -86,30 +87,57 @@ if not TELEGRAM_TOKEN or not CHAT_ID:
 # Глобальная переменная для хранения последних пулов
 last_pools = []
 
+# Загрузка фильтров
+def load_filters():
+    with open("filters.json", "r", encoding="utf-8") as file:
+        return json.load(file)
+
+# Применение фильтров
+def apply_filters(pool, filters):
+    for condition in filters["conditions"]:
+        param = condition.get("param")
+        param1 = condition.get("param1")
+        param2 = condition.get("param2")
+        operator = condition.get("operator")
+        multiplier = condition.get("multiplier", 1.0)
+
+        if condition["type"] == "range":
+            value = pool.get(param, 0)
+            if not (condition["min"] <= value <= condition["max"]):
+                return False
+        elif condition["type"] == "comparison":
+            value1 = pool.get(param1, 0)
+            value2 = pool.get(param2, 0)
+            if operator == ">=" and not (value1 >= value2 * multiplier):
+                return False
+            elif operator == "<=" and not (value1 <= value2 * multiplier):
+                return False
+            elif operator == ">" and not (value1 > value2 * multiplier):
+                return False
+            elif operator == "<" and not (value1 < value2 * multiplier):
+                return False
+            elif operator == "==" and not (value1 == value2 * multiplier):
+                return False
+    return True
+
 # Функция для получения данных о пулах от API Meteora
 async def get_meteora_pools():
     try:
-        response = requests.get(API_URLS["meteora_pools"])
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(API_URLS["meteora_pools"], timeout=10)
+            response.raise_for_status()
+            return response.json()
+    except httpx.RequestError as e:
         logger.error(f"Ошибка получения пулов от Meteora: {e}")
         return None
 
 # Функция для проверки новых пулов
-async def track_new_pools(user_id):
+async def track_new_pools(application, user_id):
     global last_pools
     logger.info("Запуск проверки новых пулов")
     
-    # Получаем настройки пользователя
-    settings = get_user_settings(user_id)
-    if not settings:
-        settings = {
-            "min_tvl": 0,
-            "max_tvl": float("inf"),
-            "min_fees": 0,
-            "max_fees": float("inf"),
-        }
+    # Загружаем фильтры
+    filters = load_filters()
 
     # Получаем текущие пулы
     current_pools = await get_meteora_pools()
@@ -117,12 +145,8 @@ async def track_new_pools(user_id):
         logger.warning("Нет данных для обработки от Meteora")
         return
 
-    # Фильтруем пулы по критериям
-    filtered_pools = [
-        pool for pool in current_pools
-        if settings["min_tvl"] <= pool.get("tvl", 0) <= settings["max_tvl"]
-        and settings["min_fees"] <= pool.get("fees", 0) <= settings["max_fees"]
-    ]
+    # Фильтруем пулы по условиям
+    filtered_pools = [pool for pool in current_pools if apply_filters(pool, filters)]
 
     # Находим новые пулы
     new_pools = [pool for pool in filtered_pools if pool not in last_pools]
@@ -141,7 +165,7 @@ async def track_new_pools(user_id):
                 f"🪙 Токен (https://t.me/meteora_pool_tracker_bot/?start=pools={pool.get('token_address')}): {pool.get('token_address')}\n"
                 f"🤐 Mute 1h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_1h) | Mute 24h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_24h) | Mute forever (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_forever)"
             )
-            await send_telegram_message(user_id, message)
+            await send_telegram_message(application, user_id, message)
         
         # Обновляем список последних пулов
         last_pools = filtered_pools
@@ -149,9 +173,8 @@ async def track_new_pools(user_id):
         logger.info("Новых пулов не обнаружено")
 
 # Функция для отправки сообщений в Telegram
-async def send_telegram_message(user_id: int, message: str):
+async def send_telegram_message(application, user_id: int, message: str):
     try:
-        application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         await application.bot.send_message(chat_id=user_id, text=message)
     except Exception as e:
         logger.error(f"Ошибка отправки сообщения в Telegram: {e}")
@@ -174,7 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Обработчик для кнопки "Проверить пулы"
 async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Проверяю новые пулы...")
-    await track_new_pools(update.message.from_user.id)
+    await track_new_pools(context.application, update.message.from_user.id)
 
 # Обработчик для кнопки "Настройки"
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
