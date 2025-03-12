@@ -165,7 +165,7 @@ async def track_new_pools(application, user_id):
                 f"🪙 Токен (https://t.me/meteora_pool_tracker_bot/?start=pools={pool.get('token_address')}): {pool.get('token_address')}\n"
                 f"🤐 Mute 1h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_1h) | Mute 24h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_24h) | Mute forever (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_forever)"
             )
-            await send_telegram_message(application, user_id, message)
+            await send_telegram_message(application, CHAT_ID, message)   # Исправлено user_id на CHAT_ID
         
         # Обновляем список последних пулов
         last_pools = filtered_pools
@@ -290,26 +290,42 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                    "Используйте кнопки для взаимодействия с ботом.\n"
                                    "Если что-то не работает, напишите /start.")
 
-# Основная функция
+# Основная функция (ИСПРАВЛЕНА СТРУКТУРА)
 def main():
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Команды
+    # Добавляем обработчики ПЕРЕД запуском планировщика
     application.add_handler(CommandHandler("start", start))
-
-    # Обработчики кнопок
     application.add_handler(MessageHandler(filters.Text("Проверить пулы"), check_pools))
     application.add_handler(MessageHandler(filters.Text("Настройки"), settings))
     application.add_handler(MessageHandler(filters.Text("TVL"), set_tvl))
     application.add_handler(MessageHandler(filters.Text("Fees"), set_fees))
     application.add_handler(MessageHandler(filters.Text("Назад"), show_main_menu))
     application.add_handler(MessageHandler(filters.Text("Помощь"), help_command))
-
-    # Обработчики текстовых сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Запуск бота
-    application.run_polling()
+    # Настройка планировщика
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        track_new_pools, 
+        'interval', 
+        minutes=5,
+        args=[application, CHAT_ID]  # Правильные аргументы
+    )
+    scheduler.start()
+
+    # Выбор режима запуска (WEBHOOK для Render)
+    if os.environ.get('RENDER'):
+        port = int(os.environ.get("PORT", 5000))
+        webhook_url = f"https://YOUR_APP_NAME.onrender.com/{TELEGRAM_TOKEN}"  # ЗАМЕНИТЕ YOUR_APP_NAME
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=TELEGRAM_TOKEN,
+            webhook_url=webhook_url
+        )
+    else:
+        application.run_polling()
 
 if __name__ == "__main__":
     try:
