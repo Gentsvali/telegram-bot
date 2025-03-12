@@ -1,4 +1,18 @@
 import sqlite3
+import os
+import logging
+from datetime import datetime
+from dotenv import load_dotenv
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+import requests
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Инициализация базы данных
 def init_db():
@@ -32,108 +46,19 @@ def get_user_settings(user_id):
         }
     return None
 
-# Обновление настроек пользователя (только указанные параметры)
+# Обновление настроек пользователя
 def update_user_settings(user_id, min_tvl=None, max_tvl=None, min_fees=None, max_fees=None):
-    # Получаем текущие настройки
-    current_settings = get_user_settings(user_id)
-    if not current_settings:
-        # Если настроек нет, используем дефолтные значения
-        current_settings = {
-            "min_tvl": 0,
-            "max_tvl": 1000000,
-            "min_fees": 0,
-            "max_fees": 100
-        }
-    else:
-        # Преобразуем в словарь для удобства
-        current_settings = {
-            "min_tvl": current_settings["min_tvl"],
-            "max_tvl": current_settings["max_tvl"],
-            "min_fees": current_settings["min_fees"],
-            "max_fees": current_settings["max_fees"]
-        }
-    
-    # Объединяем с новыми значениями
-    updated_settings = {
-        "min_tvl": min_tvl if min_tvl is not None else current_settings["min_tvl"],
-        "max_tvl": max_tvl if max_tvl is not None else current_settings["max_tvl"],
-        "min_fees": min_fees if min_fees is not None else current_settings["min_fees"],
-        "max_fees": max_fees if max_fees is not None else current_settings["max_fees"]
-    }
-    
-    # Сохраняем в БД
     conn = sqlite3.connect("user_settings.db")
     cursor = conn.cursor()
     cursor.execute("""
         INSERT OR REPLACE INTO user_settings (user_id, min_tvl, max_tvl, min_fees, max_fees)
         VALUES (?, ?, ?, ?, ?)
-    """, (user_id, 
-          updated_settings["min_tvl"], 
-          updated_settings["max_tvl"], 
-          updated_settings["min_fees"], 
-          updated_settings["max_fees"]))
+    """, (user_id, min_tvl, max_tvl, min_fees, max_fees))
     conn.commit()
     conn.close()
 
-# Обработчик текстовых сообщений (обновленная версия)
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    text = update.message.text
-
-    if "awaiting_input" in context.user_data:
-        setting = context.user_data["awaiting_input"]
-        try:
-            value = float(text)
-            if setting == "min_tvl":
-                context.user_data["min_tvl"] = value
-                await update.message.reply_text("Теперь введите максимальное значение TVL:")
-                context.user_data["awaiting_input"] = "max_tvl"
-            elif setting == "max_tvl":
-                context.user_data["max_tvl"] = value
-                # Сохраняем только TVL
-                update_user_settings(
-                    user_id, 
-                    min_tvl=context.user_data["min_tvl"], 
-                    max_tvl=context.user_data["max_tvl"]
-                )
-                await update.message.reply_text("✅ Настройки TVL успешно сохранены.")
-                # Очищаем контекст
-                del context.user_data["awaiting_input"]
-                del context.user_data["min_tvl"]
-                del context.user_data["max_tvl"]
-                await show_main_menu(update, context)
-            elif setting == "min_fees":
-                context.user_data["min_fees"] = value
-                await update.message.reply_text("Теперь введите максимальное значение Fees:")
-                context.user_data["awaiting_input"] = "max_fees"
-            elif setting == "max_fees":
-                context.user_data["max_fees"] = value
-                # Сохраняем только Fees
-                update_user_settings(
-                    user_id, 
-                    min_fees=context.user_data["min_fees"], 
-                    max_fees=context.user_data["max_fees"]
-                )
-                await update.message.reply_text("✅ Настройки Fees успешно сохранены.")
-                # Очищаем контекст
-                del context.user_data["awaiting_input"]
-                del context.user_data["min_fees"]
-                del context.user_data["max_fees"]
-                await show_main_menu(update, context)
-        except ValueError:
-            await update.message.reply_text("❌ Ошибка: введите число.")
-
 # Инициализация базы данных при запуске
 init_db()
-
-import os
-import logging
-from datetime import datetime
-from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
-import requests
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -169,17 +94,6 @@ async def get_meteora_pools():
         return response.json()
     except requests.exceptions.RequestException as e:
         logger.error(f"Ошибка получения пулов от Meteora: {e}")
-        return None
-
-# Функция для получения данных о пуле от DexScreener
-async def get_dexscreener_pool(address: str):
-    try:
-        url = API_URLS["dexscreener"].format(address=address)
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка получения данных от DexScreener: {e}")
         return None
 
 # Функция для проверки новых пулов
@@ -302,33 +216,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["awaiting_input"] = "max_tvl"
             elif setting == "max_tvl":
                 context.user_data["max_tvl"] = value
-                await update.message.reply_text("Настройки TVL сохранены.")
-                await save_settings(update, context)
+                # Сохраняем только TVL
+                update_user_settings(
+                    user_id, 
+                    min_tvl=context.user_data["min_tvl"], 
+                    max_tvl=context.user_data["max_tvl"]
+                )
+                await update.message.reply_text("✅ Настройки TVL успешно сохранены.")
+                # Очищаем контекст
+                del context.user_data["awaiting_input"]
+                del context.user_data["min_tvl"]
+                del context.user_data["max_tvl"]
+                await show_main_menu(update, context)
             elif setting == "min_fees":
                 context.user_data["min_fees"] = value
                 await update.message.reply_text("Теперь введите максимальное значение Fees:")
                 context.user_data["awaiting_input"] = "max_fees"
             elif setting == "max_fees":
                 context.user_data["max_fees"] = value
-                await update.message.reply_text("Настройки Fees сохранены.")
-                await save_settings(update, context)
+                # Сохраняем только Fees
+                update_user_settings(
+                    user_id, 
+                    min_fees=context.user_data["min_fees"], 
+                    max_fees=context.user_data["max_fees"]
+                )
+                await update.message.reply_text("✅ Настройки Fees успешно сохранены.")
+                # Очищаем контекст
+                del context.user_data["awaiting_input"]
+                del context.user_data["min_fees"]
+                del context.user_data["max_fees"]
+                await show_main_menu(update, context)
         except ValueError:
             await update.message.reply_text("❌ Ошибка: введите число.")
-
-# Сохранение настроек
-async def save_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    min_tvl = context.user_data.get("min_tvl")
-    max_tvl = context.user_data.get("max_tvl")
-    min_fees = context.user_data.get("min_fees")
-    max_fees = context.user_data.get("max_fees")
-
-    if min_tvl is not None and max_tvl is not None and min_fees is not None and max_fees is not None:
-        update_user_settings(user_id, min_tvl, max_tvl, min_fees, max_fees)
-        await update.message.reply_text("✅ Настройки успешно сохранены.")
-        await show_main_menu(update, context)
-    else:
-        await update.message.reply_text("❌ Ошибка: не все настройки введены.")
 
 # Показ главного меню
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
