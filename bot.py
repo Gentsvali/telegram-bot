@@ -2,7 +2,7 @@ import json
 import sqlite3
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import pytz
 
 # Инициализация базы данных
 def init_db():
@@ -22,10 +23,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_settings (
             user_id INTEGER PRIMARY KEY,
-            min_tvl REAL DEFAULT 0,
-            max_tvl REAL DEFAULT 1000000,
-            min_fees REAL DEFAULT 0,
-            max_fees REAL DEFAULT 100
+            filters TEXT DEFAULT '{}'
         )
     """)
     conn.commit()
@@ -35,33 +33,23 @@ def init_db():
 def get_user_settings(user_id):
     conn = sqlite3.connect("user_settings.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT filters FROM user_settings WHERE user_id = ?", (user_id,))
     settings = cursor.fetchone()
     conn.close()
-    if settings:
-        return {
-            "min_tvl": settings[1],
-            "max_tvl": settings[2],
-            "min_fees": settings[3],
-            "max_fees": settings[4],
-        }
-    return None
+    return json.loads(settings[0]) if settings else None
 
 # Обновление настроек пользователя
-def update_user_settings(user_id, min_tvl=None, max_tvl=None, min_fees=None, max_fees=None):
+def update_user_settings(user_id, filters):
     conn = sqlite3.connect("user_settings.db")
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT OR REPLACE INTO user_settings (user_id, min_tvl, max_tvl, min_fees, max_fees)
-        VALUES (?, ?, ?, ?, ?)
-    """, (user_id, min_tvl, max_tvl, min_fees, max_fees))
+        INSERT OR REPLACE INTO user_settings (user_id, filters)
+        VALUES (?, ?)
+    """, (user_id, json.dumps(filters)))
     conn.commit()
     conn.close()
 
-# Инициализация базы данных при запуске
 init_db()
-
-# Загрузка переменных окружения
 load_dotenv()
 
 # Настройка логирования
@@ -72,263 +60,162 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация API
-API_URLS = {
-    "meteora_pools": "https://api.meteora.ag/v2/pools",
-    "dexscreener": "https://api.dexscreener.com/latest/dex/pairs/solana/{address}",
-}
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # Токен вашего Telegram-бота
-CHAT_ID = os.getenv("CHAT_ID")  # ID вашего чата с ботом
+API_URL = "https://dlmm-api.meteora.ag/pools"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# Проверка наличия обязательных переменных окружения
-if not TELEGRAM_TOKEN or not CHAT_ID:
-    logger.error("Не указаны обязательные переменные окружения: TELEGRAM_TOKEN или CHAT_ID")
-    exit(1)
+# Дефолтные фильтры
+DEFAULT_FILTERS = {
+    "minTvl": 10000,
+    "maxTvl": None,
+    "minMcap": 500000,
+    "maxMcap": None,
+    "minBinstep": None,
+    "maxBinstep": None,
+    "minYieldPercent": 1.0,
+    "maxAge": "10d",
+    "rugcheck": {
+        "maxRagScore": 20000,
+        "skipFreezeAuthority": True,
+        "skipMintAuthority": False,
+        "skipHighHolderCorrelation": True,
+        "skipLargeLPUnlocked": False,
+        "skipTopHoldersHighOwnership": False
+    }
+}
 
 # Глобальная переменная для хранения последних пулов
 last_pools = []
 
-# Загрузка фильтров
-def load_filters():
-    with open("filters.json", "r", encoding="utf-8") as file:
-        return json.load(file)
+def parse_age(age_str):
+    units = {
+        'd': 'days',
+        'h': 'hours',
+        'm': 'minutes'
+    }
+    value = int(age_str[:-1])
+    unit = units[age_str[-1]]
+    return timedelta(**{unit: value})
 
-# Применение фильтров
-def apply_filters(pool, filters):
-    for condition in filters["conditions"]:
-        param = condition.get("param")
-        param1 = condition.get("param1")
-        param2 = condition.get("param2")
-        operator = condition.get("operator")
-        multiplier = condition.get("multiplier", 1.0)
-
-        if condition["type"] == "range":
-            value = pool.get(param, 0)
-            if not (condition["min"] <= value <= condition["max"]):
-                return False
-        elif condition["type"] == "comparison":
-            value1 = pool.get(param1, 0)
-            value2 = pool.get(param2, 0)
-            if operator == ">=" and not (value1 >= value2 * multiplier):
-                return False
-            elif operator == "<=" and not (value1 <= value2 * multiplier):
-                return False
-            elif operator == ">" and not (value1 > value2 * multiplier):
-                return False
-            elif operator == "<" and not (value1 < value2 * multiplier):
-                return False
-            elif operator == "==" and not (value1 == value2 * multiplier):
-                return False
-    return True
-
-# Функция для получения данных о пулах от API Meteora
 async def get_meteora_pools():
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(API_URLS["meteora_pools"], timeout=10)
+            response = await client.get(API_URL, params={"order": "created_at:desc"}, timeout=10)
             response.raise_for_status()
             return response.json()
-    except httpx.RequestError as e:
-        logger.error(f"Ошибка получения пулов от Meteora: {e}")
-        return None
+    except Exception as e:
+        logger.error(f"Ошибка получения пулов: {e}")
+        return []
 
-# Функция для проверки новых пулов
-async def track_new_pools(application, user_id):
-    global last_pools
-    logger.info("Запуск проверки новых пулов")
+def apply_filters(pool, filters):
+    now = datetime.now(pytz.timezone('Europe/Moscow'))
+    created_at = datetime.fromisoformat(pool['created_at'].replace('Z', '+00:00')).astimezone(pytz.timezone('Europe/Moscow'))
     
-    # Загружаем фильтры
-    filters = load_filters()
+    # Фильтр по времени
+    if filters['maxAge']:
+        max_age = parse_age(filters['maxAge'])
+        if now - created_at > max_age:
+            return False
 
-    # Получаем текущие пулы
+    # TVL фильтр
+    tvl = pool.get('total_liquidity_usd', 0)
+    if filters['minTvl'] and tvl < filters['minTvl']:
+        return False
+    if filters['maxTvl'] and tvl > filters['maxTvl']:
+        return False
+
+    # Market Cap фильтр
+    mcap = pool.get('market_cap', 0)
+    if filters['minMcap'] and mcap < filters['minMcap']:
+        return False
+    if filters['maxMcap'] and mcap > filters['maxMcap']:
+        return False
+
+    # Rugcheck фильтры
+    rugcheck = pool.get('rugcheck', {})
+    if rugcheck.get('ragScore', 0) > filters['rugcheck']['maxRagScore']:
+        return False
+    if not filters['rugcheck']['skipFreezeAuthority'] and rugcheck.get('freezeAuthority'):
+        return False
+    # Другие rugcheck фильтры...
+
+    return True
+
+async def track_new_pools(context):
+    user_id = context.job.user_id
+    filters = get_user_settings(user_id) or DEFAULT_FILTERS
+    
     current_pools = await get_meteora_pools()
     if not current_pools:
-        logger.warning("Нет данных для обработки от Meteora")
         return
 
-    # Фильтруем пулы по условиям
     filtered_pools = [pool for pool in current_pools if apply_filters(pool, filters)]
-
-    # Находим новые пулы
     new_pools = [pool for pool in filtered_pools if pool not in last_pools]
 
     if new_pools:
-        logger.info(f"Найдено {len(new_pools)} новых пулов")
-        # Отправляем уведомление в Telegram
         for pool in new_pools:
             message = (
-                f"🔥 Обнаружены пулы с высокой доходностью 🔥\n\n"
-                f"🔥 {pool.get('pair')} (https://t.me/meteora_pool_tracker_bot/?start=pool_info={pool.get('address')}) | создан ~{pool.get('age')} назад | RugCheck: 🟢1 (https://rugcheck.xyz/tokens/{pool.get('token_address')})\n"
-                f"🔗 Meteora (https://app.meteora.ag/dlmm/{pool.get('address')}) | DexScreener (https://dexscreener.com/solana/{pool.get('address')}) | GMGN (https://gmgn.ai/sol/token/{pool.get('token_address')}) | TrenchRadar (https://trench.bot/bundles/{pool.get('token_address')}?all=true)\n"
-                f"💎 Market Cap: ${pool.get('market_cap', 'N/A')} 🔹TVL: ${pool.get('tvl', 'N/A')}\n"
-                f"📊 Объем: ${pool.get('volume', 'N/A')} 🔸 Bin Step: {pool.get('bin_step', 'N/A')} 💵 Fees: {pool.get('fees', 'N/A')} | {pool.get('dynamic_fee', 'N/A')}\n"
-                f"🤑 Принт (5m dynamic fee/TVL): {pool.get('print_rate', 'N/A')}\n"
-                f"🪙 Токен (https://t.me/meteora_pool_tracker_bot/?start=pools={pool.get('token_address')}): {pool.get('token_address')}\n"
-                f"🤐 Mute 1h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_1h) | Mute 24h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_24h) | Mute forever (https://t.me/meteora_pool_tracker_bot/?start=mute_token={pool.get('token_address')}_forever)"
+                f"🔥 Новый пул: {pool['token_x']['symbol']}/{pool['token_y']['symbol']}\n"
+                f"🕒 Создан: {datetime.fromisoformat(pool['created_at'].replace('Z', '+00:00')).astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')\n"
+                f"💎 TVL: ${pool.get('total_liquidity_usd', 0):.2f}\n"
+                f"📊 MCap: ${pool.get('market_cap', 0):.2f}\n"
+                f"🔗 [Meteora](https://app.meteora.ag/dlmm/{pool['address']}) | [DexScreener](https://dexscreener.com/solana/{pool['address']})"
             )
-            await send_telegram_message(application, CHAT_ID, message)   # Исправлено user_id на CHAT_ID
+            await context.bot.send_message(chat_id=user_id, text=message, parse_mode='Markdown')
         
-        # Обновляем список последних пулов
-        last_pools = filtered_pools
-    else:
-        logger.info("Новых пулов не обнаружено")
+        last_pools[:] = filtered_pools
 
-# Функция для отправки сообщений в Telegram
-async def send_telegram_message(application, user_id: int, message: str):
-    try:
-        await application.bot.send_message(chat_id=user_id, text=message)
-    except Exception as e:
-        logger.error(f"Ошибка отправки сообщения в Telegram: {e}")
-
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Создаем клавиатуру с кнопками
-    keyboard = [
-        ["Проверить пулы"],
-        ["Настройки", "Помощь"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-    # Отправляем сообщение с клавиатурой
+    user_id = update.effective_user.id
+    keyboard = [["Проверить сейчас"], ["Настройки"]]
     await update.message.reply_text(
-        "Бот запущен и отслеживает новые пулы на платформе Meteor!",
-        reply_markup=reply_markup
+        "🔔 Бот для отслеживания новых пулов Meteora\n\n"
+        "Текущие настройки фильтров:\n"
+        f"```{json.dumps(get_user_settings(user_id) or DEFAULT_FILTERS, indent=2)}```",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode='MarkdownV2'
     )
 
-# Обработчик для кнопки "Проверить пулы"
-async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔄 Проверяю новые пулы...")
-    await track_new_pools(context.application, update.message.from_user.id)
-
-# Обработчик для кнопки "Настройки"
-async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Создаем клавиатуру с кнопками для настроек
-    keyboard = [
-        ["TVL", "Fees"],
-        ["Назад"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-    # Отправляем сообщение с клавиатурой
+async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚙️ Выберите параметр для настройки:",
-        reply_markup=reply_markup
+        "⚙️ Отправьте JSON с новыми настройками фильтров. Пример:\n"
+        "```\n"
+        "{\n"
+        '  "minTvl": 10000,\n'
+        '  "maxAge": "3d"\n'
+        "}\n"
+        "```",
+        parse_mode='MarkdownV2'
     )
 
-# Обработчик для кнопки "TVL"
-async def set_tvl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Введите минимальное значение TVL:")
-    context.user_data["awaiting_input"] = "min_tvl"
+async def handle_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        new_filters = json.loads(update.message.text)
+        current_filters = get_user_settings(user_id) or DEFAULT_FILTERS.copy()
+        current_filters.update(new_filters)
+        update_user_settings(user_id, current_filters)
+        await update.message.reply_text("✅ Настройки обновлены!")
+    except json.JSONDecodeError:
+        await update.message.reply_text("❌ Ошибка формата JSON")
 
-# Обработчик для кнопки "Fees"
-async def set_fees(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Введите минимальное значение Fees:")
-    context.user_data["awaiting_input"] = "min_fees"
-
-# Обработчик для текстовых сообщений (ввод настроек)
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    text = update.message.text
-
-    if "awaiting_input" in context.user_data:
-        setting = context.user_data["awaiting_input"]
-        try:
-            value = float(text)
-            if setting == "min_tvl":
-                context.user_data["min_tvl"] = value
-                await update.message.reply_text("Теперь введите максимальное значение TVL:")
-                context.user_data["awaiting_input"] = "max_tvl"
-            elif setting == "max_tvl":
-                context.user_data["max_tvl"] = value
-                # Сохраняем только TVL
-                update_user_settings(
-                    user_id, 
-                    min_tvl=context.user_data["min_tvl"], 
-                    max_tvl=context.user_data["max_tvl"]
-                )
-                await update.message.reply_text("✅ Настройки TVL успешно сохранены.")
-                # Очищаем контекст
-                del context.user_data["awaiting_input"]
-                del context.user_data["min_tvl"]
-                del context.user_data["max_tvl"]
-                await show_main_menu(update, context)
-            elif setting == "min_fees":
-                context.user_data["min_fees"] = value
-                await update.message.reply_text("Теперь введите максимальное значение Fees:")
-                context.user_data["awaiting_input"] = "max_fees"
-            elif setting == "max_fees":
-                context.user_data["max_fees"] = value
-                # Сохраняем только Fees
-                update_user_settings(
-                    user_id, 
-                    min_fees=context.user_data["min_fees"], 
-                    max_fees=context.user_data["max_fees"]
-                )
-                await update.message.reply_text("✅ Настройки Fees успешно сохранены.")
-                # Очищаем контекст
-                del context.user_data["awaiting_input"]
-                del context.user_data["min_fees"]
-                del context.user_data["max_fees"]
-                await show_main_menu(update, context)
-        except ValueError:
-            await update.message.reply_text("❌ Ошибка: введите число.")
-
-# Показ главного меню
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        ["Проверить пулы"],
-        ["Настройки", "Помощь"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text(
-        "Главное меню:",
-        reply_markup=reply_markup
-    )
-
-# Обработчик для команды "Помощь"
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ℹ️ Помощь:\n"
-                                   "Используйте кнопки для взаимодействия с ботом.\n"
-                                   "Если что-то не работает, напишите /start.")
-
-# Основная функция (ИСПРАВЛЕНА СТРУКТУРА)
 def main():
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Добавляем обработчики ПЕРЕД запуском планировщика
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Text("Проверить пулы"), check_pools))
-    application.add_handler(MessageHandler(filters.Text("Настройки"), settings))
-    application.add_handler(MessageHandler(filters.Text("TVL"), set_tvl))
-    application.add_handler(MessageHandler(filters.Text("Fees"), set_fees))
-    application.add_handler(MessageHandler(filters.Text("Назад"), show_main_menu))
-    application.add_handler(MessageHandler(filters.Text("Помощь"), help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    application.add_handler(MessageHandler(filters.Text("Проверить сейчас"), 
+                         lambda update, ctx: track_new_pools(ctx)))
+    application.add_handler(MessageHandler(filters.Text("Настройки"), handle_settings))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_json))
 
-    # Настройка планировщика
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        track_new_pools, 
-        'interval', 
-        minutes=5,
-        args=[application, CHAT_ID]  # Правильные аргументы
+    # Настройка периодической проверки
+    application.job_queue.run_repeating(
+        track_new_pools,
+        interval=300,
+        first=10,
+        chat_id=TELEGRAM_TOKEN.split(':')[0]  # Для теста
     )
-    scheduler.start()
 
-    # Выбор режима запуска (WEBHOOK для Render)
-    if os.environ.get('RENDER'):
-        port = int(os.environ.get("PORT", 5000))
-        webhook_url = f"https://YOUR_APP_NAME.onrender.com/{TELEGRAM_TOKEN}"  # ЗАМЕНИТЕ YOUR_APP_NAME
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=TELEGRAM_TOKEN,
-            webhook_url=webhook_url
-        )
-    else:
-        application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен")
+    main()
