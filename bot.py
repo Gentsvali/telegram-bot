@@ -158,8 +158,8 @@ async def track_new_pools(context):
                 f"🕒 Создан: {datetime.fromisoformat(pool['created_at'].replace('Z', '+00:00')).astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')\n"
                 f"💎 TVL: ${pool.get('total_liquidity_usd', 0):.2f}\n"
                 f"📊 MCap: ${pool.get('market_cap', 0):.2f}\n"
-                f"🔗 [Meteora](https://app.meteora.ag/dlmm/{pool['address']}) [DexScreener](https://dexscreener.com/solana/{pool['address']})"
-            )
+                f"🔗 [Meteora](https://app.meteora.ag/dlmm/{pool['address']}) [DexScreener](https://dexscreener.com/solana/{pool['address']})"                                              
+                                                                                                                                                                                                                                                        
             await context.bot.send_message(chat_id=user_id, text=message, parse_mode='Markdown')
         
         last_pools[:] = filtered_pools
