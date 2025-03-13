@@ -3,13 +3,11 @@ import os
 import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 import httpx
 import pytz
@@ -31,11 +29,11 @@ API_URL = "https://dlmm-api.meteora.ag/pair/all_with_pagination"
 
 # Фильтры по умолчанию
 DEFAULT_FILTERS = {
-    "min_tvl": 10000,      # Минимальный TVL в $
-    "max_age": "3h",       # Максимальный возраст пула
-    "min_volume_24h": 5000,# Минимальный объем за 24ч
-    "min_apr": 5.0,        # Минимальный APR
-    "verified_only": True  # Только верифицированные токены
+    "min_tvl": 10000.0,
+    "max_age": "3h",
+    "min_volume_24h": 5000.0,
+    "min_apr": 5.0,
+    "verified_only": True
 }
 
 filters = DEFAULT_FILTERS.copy()
@@ -69,30 +67,34 @@ async def get_meteora_pools():
         return []
 
 def apply_filters(pool):
-    # Проверка TVL
-    if pool.get("liquidity", 0) < filters["min_tvl"]:
-        return False
-    
-    # Проверка объема
-    if pool.get("trade_volume_24h", 0) < filters["min_volume_24h"]:
-        return False
-    
-    # Проверка APR
-    if pool.get("apr", 0) < filters["min_apr"]:
-        return False
-    
-    # Проверка времени создания
-    created_at_str = pool.get("created_at")
-    if created_at_str:
-        try:
+    try:
+        # Проверка TVL
+        tvl = float(pool.get("liquidity", 0))
+        if tvl < filters["min_tvl"]:
+            return False
+        
+        # Проверка объема
+        volume = float(pool.get("trade_volume_24h", 0))
+        if volume < filters["min_volume_24h"]:
+            return False
+        
+        # Проверка APR
+        apr = float(pool.get("apr", 0))
+        if apr < filters["min_apr"]:
+            return False
+        
+        # Проверка времени создания
+        created_at_str = pool.get("created_at")
+        if created_at_str:
             created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
             max_age = parse_age(filters["max_age"])
             if (datetime.now(pytz.utc) - created_at) > max_age:
                 return False
-        except:
-            return False
-    
-    return True
+        
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка фильтрации пула: {e}")
+        return False
 
 async def send_pool_notification(context, pool):
     try:
@@ -102,9 +104,9 @@ async def send_pool_notification(context, pool):
         message = (
             f"🔥 Новый пул: {pool.get('mint_x', '?')}/{pool.get('mint_y', '?')}\n"
             f"🕒 Создан: {moscow_time.strftime('%d.%m.%Y %H:%M')}\n"
-            f"💎 TVL: ${pool.get('liquidity', 0):,.2f}\n"
-            f"📈 Объем 24ч: ${pool.get('trade_volume_24h', 0):,.2f}\n"
-            f"🎯 APR: {pool.get('apr', 0):.1f}%\n"
+            f"💎 TVL: ${float(pool.get('liquidity', 0)):,.2f}\n"
+            f"📈 Объем 24ч: ${float(pool.get('trade_volume_24h', 0)):,.2f}\n"
+            f"🎯 APR: {float(pool.get('apr', 0)):.1f}%\n"
             f"🔗 [Meteora](https://app.meteora.ag/dlmm/{pool.get('address', '')})"
         )
         
@@ -189,6 +191,9 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка изменения фильтра: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Ошибка: {context.error}")
+
 def main():
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
@@ -197,6 +202,7 @@ def main():
     application.add_handler(CommandHandler("help", start))
     application.add_handler(CommandHandler("filters", show_filters))
     application.add_handler(CommandHandler("setfilter", set_filter))
+    application.add_error_handler(error_handler)
     
     # Настройка периодической проверки
     application.job_queue.run_repeating(
