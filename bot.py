@@ -213,7 +213,7 @@ def main():
         interval=300,
         first=10,
         # Укажите ваш реальный CHAT_ID вместо использования токена
-        chat_id=int(os.getenv("839443665"))  
+        chat_id=int(os.getenv("CHAT_ID"))  
     )
 
     application.run_polling()
