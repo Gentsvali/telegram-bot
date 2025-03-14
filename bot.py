@@ -204,10 +204,6 @@ def home():
 def home():
     return "🤖 Бот успешно работает! Отправьте /start в Telegram"
 
-@app.route('/ping')
-def ping():
-    return "pong", 200
-
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 async def webhook():
     try:
