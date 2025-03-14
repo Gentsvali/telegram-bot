@@ -1,4 +1,4 @@
-python-telegram-bot[job-queue]==20.3
+python-telegram-bot[webhooks,job-queue]==20.3  
 httpx==0.24.1
 python-dotenv==1.0.0
 pytz==2023.3
