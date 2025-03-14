@@ -2,5 +2,5 @@ python-telegram-bot[webhooks,job-queue]==20.3
 httpx==0.24.1
 python-dotenv==1.0.0
 pytz==2023.3
-flask==2.3.2
 gunicorn==21.2.0
+flask[async]==2.3.2

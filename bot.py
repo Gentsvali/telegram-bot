@@ -206,22 +206,21 @@ def webhook_get():
     return "Используйте POST-запросы для этого эндпоинта", 405
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-async def webhook():
+def webhook():
     try:
         logger.info("Получен POST-запрос на вебхук")
-        data = await request.get_json()
+        data = request.get_json()
         if not data:
             logger.error("Пустое тело запроса")
             return 'Bad Request', 400
             
         update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        application.update_queue.put(update)
         return 'OK', 200
         
     except Exception as e:
         logger.error(f"Ошибка обработки вебхука: {str(e)}")
         return 'Internal Server Error', 500
-
 @app.route('/test')
 def test():
     return "Тестовый роут работает!", 200                                                       # Запуск приложения
