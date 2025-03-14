@@ -199,19 +199,47 @@ application.job_queue.run_repeating(
 def home():
     return "🤖 Бот успешно работает! Отправьте /start в Telegram"
 
+# Вебхук и роуты
+@app.route('/')
+def home():
+    return "🤖 Бот успешно работает! Отправьте /start в Telegram"
+
+@app.route('/ping')
+def ping():
+    return "pong", 200
+
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 async def webhook():
-    update = Update.de_json(await request.get_json(), application.bot)
-    await application.process_update(update)
-    return 'OK', 200
+    try:
+        logger.info("Получен запрос на вебхук")
+        
+        data = await request.get_json()
+        if not data:
+            logger.error("Пустое тело запроса")
+            return 'Bad Request', 400
+            
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return 'OK', 200
+        
+    except Exception as e:
+        logger.error(f"Ошибка обработки вебхука: {str(e)}")
+        return 'Internal Server Error', 500
 
 # Запуск приложения
 if __name__ == "__main__":
+    # Добавим проверку переменных окружения
+    if not all([TELEGRAM_TOKEN, WEBHOOK_URL, PORT]):
+        logger.error("Не хватает обязательных переменных окружения")
+        exit(1)
+        
+    # Упростим запуск вебхука
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-        secret_token=os.getenv("SECRET_TOKEN") 
+        drop_pending_updates=True
     )
+    
+    # Добавим сообщение в лог
+    logger.info(f"Бот запущен на порту {PORT}")
