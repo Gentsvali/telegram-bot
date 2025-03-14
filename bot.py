@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from flask import Flask, request
 from dotenv import load_dotenv
@@ -38,7 +39,6 @@ last_checked_pools = set()
 
 # Инициализация Flask и бота
 app = Flask(__name__)
-# Инициализация бота с поддержкой Job Queue
 application = (
     ApplicationBuilder()
     .token(TELEGRAM_TOKEN)
@@ -194,8 +194,6 @@ application.job_queue.run_repeating(
     first=10,
 )
 
-
-
 # Вебхук и роуты
 @app.route('/')
 def home():
@@ -215,25 +213,29 @@ def webhook():
             return 'Bad Request', 400
             
         update = Update.de_json(data, application.bot)
-        application.process_update(update)
+        asyncio.run(application.process_update(update))
         return 'OK', 200
         
     except Exception as e:
         logger.error(f"Ошибка обработки вебхука: {str(e)}")
         return 'Internal Server Error', 500
+
 @app.route('/test')
 def test():
-    return "Тестовый роут работает!", 200                                                       # Запуск приложения
+    return "Тестовый роут работает!", 200
+
+# Запуск приложения
 if __name__ == "__main__":
     # Проверка переменных окружения
     if not all([TELEGRAM_TOKEN, WEBHOOK_URL, PORT]):
         logger.error("Не хватает обязательных переменных окружения")
         exit(1)
         
+    # Установка вебхука
+    async def set_webhook():
+        await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+
+    asyncio.run(set_webhook())
+    
     # Запуск Flask
     app.run(host='0.0.0.0', port=PORT)
-    
-    # Запуск бота через polling
-    application.run_polling()
-    
-    logger.info("Бот запущен в режиме polling")
