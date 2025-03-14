@@ -1,7 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
-from flask import Flask
+from flask import Flask, request
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -24,7 +24,7 @@ USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 
-# Конфигурация API
+# Конфигурация API и фильтров
 API_URL = "https://dlmm-api.meteora.ag/pair/all_with_pagination"
 DEFAULT_FILTERS = {
     "min_tvl": 10000.0,
@@ -38,25 +38,64 @@ last_checked_pools = set()
 
 # Инициализация Flask и бота
 app = Flask(__name__)
-application = Application.builder().token(TELEGRAM_TOKEN).build()  # ← Добавили эту строку
+application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-# Обработчик команды /start
-async def start(update, context):
-    await update.message.reply_text("Привет! Я работаю!")  # ← Обратите внимание на 'await'
+# Обработчики команд
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != USER_ID:
+        return
+    await update.message.reply_text(
+        "🚀 Бот для отслеживания новых пулов Meteora!\n"
+        "Команды:\n"
+        "/filters - текущие настройки\n"
+        "/setfilter [параметр] [значение] - изменить фильтр"
+    )
 
-# Регистрируем обработчик
-application.add_handler(CommandHandler("start", start))  # ← Добавили эту строку
+async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != USER_ID:
+        return
+    filters_text = "⚙️ Текущие настройки:\n" + "\n".join(
+        f"{key}: {value}" for key, value in current_filters.items()
+    )
+    await update.message.reply_text(filters_text)
 
-@app.route('/')
-def home():
-    return "🤖 Бот успешно работает! Отправьте /start в Telegram"
+async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != USER_ID:
+        return
+    
+    try:
+        args = context.args
+        if len(args) != 2:
+            raise ValueError("Используйте формат: /setfilter [параметр] [значение]")
+        
+        param = args[0].lower()
+        value = args[1]
+        
+        if param not in current_filters:
+            raise ValueError("Неизвестный параметр")
+        
+        # Конвертация значений
+        if param in ["min_tvl", "min_volume_24h"]:
+            current_filters[param] = float(value)
+        elif param == "min_apr":
+            current_filters[param] = float(value)
+        elif param == "max_age":
+            parse_age(value)  # Проверка формата
+            current_filters[param] = value
+        elif param == "verified_only":
+            current_filters[param] = value.lower() in ["true", "1", "yes"]
+        
+        await update.message.reply_text(f"✅ {param} обновлен: {current_filters[param]}")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-async def webhook():  # ← Добавили 'async' здесь
-    update = Update.de_json(request.get_json(), application.bot)
-    await application.process_update(update)  # ← Добавили 'await' здесь
-    return 'OK', 200
+# Регистрация команд
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("filters", show_filters))
+application.add_handler(CommandHandler("setfilter", set_filter))
 
+# Функции для работы с пулами
 def parse_age(age_str):
     units = {'d': 'days', 'h': 'hours', 'm': 'minutes'}
     unit = age_str[-1]
@@ -106,9 +145,9 @@ async def send_pool_notification(context, pool):
         message = (
             f"🔥 Новый пул: {pool.get('mint_x', '?')}/{pool.get('mint_y', '?')}\n"
             f"🕒 Создан: {moscow_time.strftime('%d.%m.%Y %H:%M')}\n"
-            f"💎 TVL: ${tvl:,.2f}\n"
-            f"📈 Объем 24ч: ${volume:,.2f}\n"
-            f"🎯 APR: {apr:.1f}%\n"
+            f"💎 TVL: ${float(pool.get('liquidity', 0)):,.2f}\n"
+            f"📈 Объем 24ч: ${float(pool.get('trade_volume_24h', 0)):,.2f}\n"
+            f"🎯 APR: {float(pool.get('apr', 0)):.1f}%\n"
             f"🔗 [Meteora](https://app.meteora.ag/dlmm/{pool.get('address', '')})"
         )
         await context.bot.send_message(
@@ -136,79 +175,29 @@ async def track_new_pools(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка при проверке пулов: {str(e)}")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != USER_ID:
-        return
-    await update.message.reply_text(
-        "🚀 Бот для отслеживания новых пулов Meteora!\n"
-        "Команды:\n"
-        "/filters - текущие настройки\n"
-        "/setfilter [параметр] [значение] - изменить фильтр"
-    )
+# Планировщик задач
+application.job_queue.run_repeating(
+    track_new_pools,
+    interval=300,
+    first=10,
+)
 
-async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != USER_ID:
-        return
-    filters_text = "⚙️ Текущие настройки:\n" + "\n".join(
-        f"{key}: {value}" for key, value in current_filters.items()
-    )
-    await update.message.reply_text(filters_text)
+# Вебхук и роуты
+@app.route('/')
+def home():
+    return "🤖 Бот успешно работает! Отправьте /start в Telegram"
 
-async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != USER_ID:
-        return
-    
-    try:
-        args = context.args
-        if len(args) != 2:
-            raise ValueError("Используйте формат: /setfilter [параметр] [значение]")
-        
-        param = args[0].lower()
-        value = args[1]
-        
-        if param not in current_filters:
-            raise ValueError("Неизвестный параметр")
-        
-        # Преобразование значений
-        if param in ["min_tvl", "min_volume_24h"]:
-            current_filters[param] = float(value)
-        elif param == "min_apr":
-            current_filters[param] = float(value)
-        elif param == "max_age":
-            parse_age(value)  # Проверка формата
-            current_filters[param] = value
-        elif param == "verified_only":
-            current_filters[param] = value.lower() in ["true", "1", "yes"]
-        
-        await update.message.reply_text(f"✅ {param} обновлен: {current_filters[param]}")
-        
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+async def webhook():
+    update = Update.de_json(await request.get_json(), application.bot)
+    await application.process_update(update)
+    return 'OK', 200
 
-def main():
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    # Регистрация команд
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("filters", show_filters))
-    application.add_handler(CommandHandler("setfilter", set_filter))
-    
-    # Планировщик заданий
-    application.job_queue.run_repeating(
-        track_new_pools,
-        interval=300,
-        first=10,
-    )
-    
-    # Настройка вебхука
+# Запуск приложения
+if __name__ == "__main__":
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path=TELEGRAM_TOKEN,
         webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
         cert_open=True
     )
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=PORT)
-    main()
