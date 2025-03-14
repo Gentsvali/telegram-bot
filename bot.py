@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 from datetime import datetime, timedelta
 from flask import Flask, request
 from dotenv import load_dotenv
@@ -204,7 +203,7 @@ def webhook_get():
     return "Используйте POST-запросы для этого эндпоинта", 405
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-def webhook():
+async def webhook():
     try:
         logger.info("Получен POST-запрос на вебхук")
         data = request.get_json()
@@ -213,7 +212,8 @@ def webhook():
             return 'Bad Request', 400
             
         update = Update.de_json(data, application.bot)
-        asyncio.run(application.process_update(update))
+        await application.initialize()  # Инициализация приложения
+        await application.process_update(update)
         return 'OK', 200
         
     except Exception as e:
@@ -235,6 +235,7 @@ if __name__ == "__main__":
     async def set_webhook():
         await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
 
+    import asyncio
     asyncio.run(set_webhook())
     
     # Запуск Flask
