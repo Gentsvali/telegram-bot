@@ -38,7 +38,13 @@ last_checked_pools = set()
 
 # Инициализация Flask и бота
 app = Flask(__name__)
-application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+# Инициализация бота с поддержкой Job Queue
+application = (
+    ApplicationBuilder()
+    .token(TELEGRAM_TOKEN)
+    .concurrent_updates(True)
+    .build()
+)
 
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
