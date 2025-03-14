@@ -15,6 +15,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -23,7 +25,7 @@ USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 
-# Конфигурация API
+# Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_with_pagination"
 DEFAULT_FILTERS = {
     "min_tvl": 10000.0,
@@ -35,7 +37,7 @@ DEFAULT_FILTERS = {
 current_filters = DEFAULT_FILTERS.copy()
 last_checked_pools = set()
 
-# Инициализация приложения
+# Инициализация приложения Telegram
 application = (
     ApplicationBuilder()
     .token(TELEGRAM_TOKEN)
@@ -45,11 +47,12 @@ application = (
 
 app = Flask(__name__)
 
-async def initialize_app():
+# Асинхронная инициализация
+async def initialize():
     """Инициализация приложения и вебхука"""
     await application.initialize()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-    logger.info("Application initialized")
+    logger.info("Приложение и вебхук успешно инициализированы")
 
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,13 +98,14 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
+# Вспомогательные функции
 def parse_age(age_str: str) -> timedelta:
     units = {'d': 'days', 'h': 'hours', 'm': 'minutes'}
     unit = age_str[-1]
     value = int(age_str[:-1])
     return timedelta(**{units[unit]: value})
 
-# Логика проверки пулов
+# Логика работы с API
 async def fetch_pools():
     try:
         params = {
@@ -112,7 +116,10 @@ async def fetch_pools():
             "hide_low_tvl": current_filters["min_tvl"],
             "include_unknown": not current_filters["verified_only"]
         }
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+        ) as client:
             response = await client.get(API_URL, params=params)
             response.raise_for_status()
             return response.json().get("pairs", [])
@@ -143,9 +150,11 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
         
         if new_pools:
             for pool in new_pools:
+                created_at = datetime.fromisoformat(pool['created_at'].replace("Z", "+00:00"))
+                moscow_time = created_at.astimezone(pytz.timezone('Europe/Moscow'))
                 message = (
                     f"🔥 Новый пул: {pool.get('mint_x', '?')}/{pool.get('mint_y', '?')}\n"
-                    f"🕒 Создан: {datetime.fromisoformat(pool['created_at'].replace('Z', '+00:00')).strftime('%d.%m.%Y %H:%M')}\n"
+                    f"🕒 Создан: {moscow_time.strftime('%d.%m.%Y %H:%M')}\n"
                     f"💎 TVL: ${float(pool.get('liquidity', 0)):,.2f}\n"
                     f"📈 Объем 24ч: ${float(pool.get('trade_volume_24h', 0)):,.2f}\n"
                     f"🎯 APR: {float(pool.get('apr', 0)):.1f}%\n"
@@ -162,7 +171,7 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка проверки пулов: {str(e)}")
 
-# Регистрация обработчиков
+# Регистрация команд
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("filters", show_filters))
 application.add_handler(CommandHandler("setfilter", set_filter))
@@ -172,11 +181,11 @@ application.job_queue.run_repeating(check_new_pools, interval=300, first=10)
 
 # Вебхук
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-async def webhook():
+def webhook():
     try:
-        data = await request.get_json()
+        data = request.get_json()
         update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        asyncio.run(application.process_update(update))
         return '', 200
     except Exception as e:
         logger.error(f"Webhook Error: {str(e)}")
@@ -186,12 +195,12 @@ async def webhook():
 def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
 
-# Запуск
+# Запуск приложения
 if __name__ == "__main__":
-    # Инициализация асинхронно
+    # Инициализация асинхронных компонентов
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(initialize_app())
+    loop.run_until_complete(initialize())
     
     # Запуск Flask
     app.run(host='0.0.0.0', port=PORT)
