@@ -201,23 +201,9 @@ application.job_queue.run_repeating(
 def home():
     return "🤖 Бот успешно работает! Отправьте /start в Telegram"
 
-@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-async def webhook():
-    try:
-        logger.info("Получен запрос на вебхук")
-        
-        data = await request.get_json()
-        if not data:
-            logger.error("Пустое тело запроса")
-            return 'Bad Request', 400
-            
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
-        return 'OK', 200
-        
-    except Exception as e:
-        logger.error(f"Ошибка обработки вебхука: {str(e)}")
-        return 'Internal Server Error', 500
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['GET'])
+def webhook_get():
+    return "Используйте POST-запросы для этого эндпоинта", 405
 
 # Запуск приложения
 if __name__ == "__main__":
