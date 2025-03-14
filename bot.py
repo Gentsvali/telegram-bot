@@ -220,7 +220,9 @@ async def webhook():
     except Exception as e:
         logger.error(f"Ошибка обработки вебхука: {str(e)}")
         return 'Internal Server Error', 500
-# Запуск приложения
+                                                                          @app.route('/test')
+def test():
+    return "Тестовый роут работает!", 200                                                                                                                                                                                                                               # Запуск приложения
 if __name__ == "__main__":
     # Добавим проверку переменных окружения
     if not all([TELEGRAM_TOKEN, WEBHOOK_URL, PORT]):
