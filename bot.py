@@ -43,9 +43,11 @@ app = Flask(__name__)
 def home():
     return "🤖 Бот успешно работает! Отправьте /start в Telegram"
 
-@app.route('/health')
-def health_check():
-    return "OK", 200
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+def webhook():
+    update = Update.de_json(request.get_json(), application.bot)
+    application.process_update(update)
+    return 'OK', 200
 
 def parse_age(age_str):
     units = {'d': 'days', 'h': 'hours', 'm': 'minutes'}
