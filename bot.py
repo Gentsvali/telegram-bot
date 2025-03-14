@@ -118,10 +118,7 @@ async def get_meteora_pools():
             "hide_low_tvl": current_filters["min_tvl"],
             "include_unknown": not current_filters["verified_only"]
         }
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0),  # Увеличьте тайм-аут
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)  # Увеличьте пул соединений
-        ) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(API_URL, params=params)
             response.raise_for_status()
             return response.json().get("pairs", [])
