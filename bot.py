@@ -226,18 +226,15 @@ async def webhook():
 def test():
     return "Тестовый роут работает!", 200                                                       # Запуск приложения
 if __name__ == "__main__":
-    # Добавим проверку переменных окружения
+    # Проверка переменных окружения
     if not all([TELEGRAM_TOKEN, WEBHOOK_URL, PORT]):
         logger.error("Не хватает обязательных переменных окружения")
         exit(1)
         
-    # Упростим запуск вебхука
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
-        drop_pending_updates=True
-    )
+    # Запуск Flask
+    app.run(host='0.0.0.0', port=PORT)
     
-    # Добавим сообщение в лог
-    logger.info(f"Бот запущен на порту {PORT}")
+    # Запуск бота через polling
+    application.run_polling()
+    
+    logger.info("Бот запущен в режиме polling")
