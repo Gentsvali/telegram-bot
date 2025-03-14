@@ -204,7 +204,8 @@ def home():
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['GET'])
 def webhook_get():
     return "Используйте POST-запросы для этого эндпоинта", 405
-                                                                         @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+
+@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 async def webhook():
     try:
         logger.info("Получен POST-запрос на вебхук")
@@ -220,9 +221,10 @@ async def webhook():
     except Exception as e:
         logger.error(f"Ошибка обработки вебхука: {str(e)}")
         return 'Internal Server Error', 500
-                                                                          @app.route('/test')
+
+@app.route('/test')
 def test():
-    return "Тестовый роут работает!", 200                                                                                                                                                                                                                               # Запуск приложения
+    return "Тестовый роут работает!", 200                                                       # Запуск приложения
 if __name__ == "__main__":
     # Добавим проверку переменных окружения
     if not all([TELEGRAM_TOKEN, WEBHOOK_URL, PORT]):
