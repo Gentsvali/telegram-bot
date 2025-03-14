@@ -194,10 +194,7 @@ application.job_queue.run_repeating(
     first=10,
 )
 
-# Вебхук и роуты
-@app.route('/')
-def home():
-    return "🤖 Бот успешно работает! Отправьте /start в Telegram"
+
 
 # Вебхук и роуты
 @app.route('/')
