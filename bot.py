@@ -36,17 +36,25 @@ DEFAULT_FILTERS = {
 current_filters = DEFAULT_FILTERS.copy()
 last_checked_pools = set()
 
-# Инициализация Flask
+# Инициализация Flask и бота
 app = Flask(__name__)
+application = Application.builder().token(TELEGRAM_TOKEN).build()  # ← Добавили эту строку
+
+# Обработчик команды /start
+async def start(update, context):
+    await update.message.reply_text("Привет! Я работаю!")  # ← Обратите внимание на 'await'
+
+# Регистрируем обработчик
+application.add_handler(CommandHandler("start", start))  # ← Добавили эту строку
 
 @app.route('/')
 def home():
     return "🤖 Бот успешно работает! Отправьте /start в Telegram"
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-def webhook():
+async def webhook():  # ← Добавили 'async' здесь
     update = Update.de_json(request.get_json(), application.bot)
-    application.process_update(update)
+    await application.process_update(update)  # ← Добавили 'await' здесь
     return 'OK', 200
 
 def parse_age(age_str):
