@@ -131,7 +131,13 @@ def apply_filters(pool):
         tvl = float(pool.get("liquidity", 0))
         volume = float(pool.get("trade_volume_24h", 0))
         apr = float(pool.get("apr", 0))
-        created_at = datetime.fromisoformat(pool['created_at'].replace("Z", "+00:00"))
+        
+        # Проверка created_at
+        created_at_str = pool.get('created_at')
+        if not created_at_str:
+            return False
+            
+        created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
         age = datetime.now(pytz.utc) - created_at
         
         return all([
@@ -204,5 +210,8 @@ if __name__ == "__main__":
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"
+        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+        secret_token=os.getenv("SECRET_TOKEN") 
     )
