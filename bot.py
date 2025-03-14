@@ -215,7 +215,7 @@ def webhook():
             return 'Bad Request', 400
             
         update = Update.de_json(data, application.bot)
-        application.update_queue.put(update)
+        application.process_update(update)
         return 'OK', 200
         
     except Exception as e:
