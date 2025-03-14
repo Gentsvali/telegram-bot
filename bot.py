@@ -42,6 +42,8 @@ application = (
     ApplicationBuilder()
     .token(TELEGRAM_TOKEN)
     .concurrent_updates(True)
+    .http_version("1.1")  # Явное указание версии HTTP
+    .get_updates_http_version("1.1")
     .build()
 )
 
@@ -168,8 +170,15 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
                 )
             last_checked_pools = current_ids
             logger.info(f"Отправлено уведомлений: {len(new_pools)}")
-    except Exception as e:
-        logger.error(f"Ошибка проверки пулов: {str(e)}")
+     except Exception as e:
+        logger.error(f"POOL CHECK ERROR: {str(e)}", exc_info=True)
+        await context.bot.send_message(
+            chat_id=USER_ID,
+            text="⚠️ Произошла ошибка при проверке пулов"
+        )
+
+# Добавляем глобальный обработчик ошибок
+application.add_error_handler(lambda _, __: logger.error("Global error"))
 
 # Регистрация команд
 application.add_handler(CommandHandler("start", start))
@@ -185,12 +194,22 @@ def webhook():
     try:
         data = request.get_json()
         update = Update.de_json(data, application.bot)
-        asyncio.run(application.process_update(update))
+        
+        # Создаем новый event loop для каждого запроса
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
         return '', 200
     except Exception as e:
-        logger.error(f"Webhook Error: {str(e)}")
-        return '', 500
-
+        logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
+        return '', 500  
+                                                                                                       @app.route('/healthcheck', methods=['GET', 'POST'])
+def healthcheck():
+    return {
+        "status": "OK",
+        "bot_initialized": application.initialized,
+        "last_update": datetime.utcnow().isoformat()
+    }, 200
 @app.route('/')
 def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
