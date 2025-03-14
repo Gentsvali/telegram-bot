@@ -204,6 +204,5 @@ if __name__ == "__main__":
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
-        cert_open=True
+        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"
     )
