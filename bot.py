@@ -25,12 +25,17 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 
 # Конфигурация API Meteora
-API_URL = "https://dlmm-api.meteora.ag/pair/all_with_pagination"
+API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
 DEFAULT_FILTERS = {
+    "stable_coin": "USDC",  # USDC или SOL
+    "bin_steps": [1, 5, 10, 50],
     "min_tvl": 10000.0,
-    "max_age": "3h",
-    "min_volume_24h": 5000.0,
-    "min_apr": 5.0,
+    "min_fdv": 500000.0,
+    "base_fee_max": 1.0,
+    "fee_tvl_ratio_24h_min": 0.1,
+    "volume_1h_min": 5000.0,
+    "volume_5m_min": 1000.0,
+    "dynamic_fee_tvl_ratio_min": 0.5,
     "verified_only": True
 }
 current_filters = DEFAULT_FILTERS.copy()
@@ -48,7 +53,6 @@ application = (
 
 app = Quart(__name__)
 
-# Обработчики событий Quart
 @app.before_serving
 async def startup():
     await application.initialize()
@@ -61,198 +65,203 @@ async def shutdown():
     await application.stop()
     await application.shutdown()
 
-# Обработчики команд
+# Основные обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != USER_ID:
         return
     await update.message.reply_text(
-        "🚀 Бот для отслеживания новых пулов Meteora!\n"
-        "Команды:\n/filters - текущие настройки\n/setfilter [параметр] [значение]\n/checkpools - проверить пулы"
+        "🚀 Умный поиск пулов Meteora\n"
+        "Команды:\n"
+        "/filters - текущие настройки\n"
+        "/setfilter - изменить параметры\n"
+        "/checkpools - проверить сейчас\n"
+        "/help - справка по командам"
     )
 
 async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != USER_ID:
         return
-    response = "⚙️ Текущие настройки:\n" + "\n".join(
-        f"{k}: {v}" for k, v in current_filters.items()
+    response = (
+        "⚙️ Текущие фильтры:\n"
+        f"• Стабильная монета: {current_filters['stable_coin']}\n"
+        f"• Bin Steps: {', '.join(map(str, current_filters['bin_steps']))}\n"
+        f"• Мин TVL: ${current_filters['min_tvl']:,.2f}\n"
+        f"• Мин FDV: ${current_filters['min_fdv']:,.2f}\n"
+        f"• Макс комиссия: {current_filters['base_fee_max']}%\n"
+        f"• Мин комиссия/TVL: {current_filters['fee_tvl_ratio_24h_min']}%\n"
+        f"• Мин объем (1ч): ${current_filters['volume_1h_min']:,.2f}\n"
+        f"• Мин объем (5м): ${current_filters['volume_5m_min']:,.2f}\n"
+        f"• Мин динамическая комиссия: {current_filters['dynamic_fee_tvl_ratio_min']}%"
     )
     await update.message.reply_text(response)
 
 async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != USER_ID:
         return
+    
     try:
         args = context.args
-        if len(args) != 2:
-            raise ValueError("Формат: /setfilter [параметр] [значение]")
-        
+        if len(args) < 2:
+            raise ValueError("Используйте: /setfilter [параметр] [значение]")
+
         param = args[0].lower()
         value = args[1]
+
+        # Обработка разных типов параметров
+        if param == "stable_coin":
+            if value.upper() not in ["USDC", "SOL"]:
+                raise ValueError("Допустимые значения: USDC или SOL")
+            current_filters[param] = value.upper()
         
-        if param not in current_filters:
-            raise ValueError("Неизвестный параметр")
+        elif param == "bin_steps":
+            current_filters[param] = [int(v.strip()) for v in value.split(',')]
         
-        # Конвертация значений
-        if param in ["min_tvl", "min_volume_24h", "min_apr"]:
+        elif param in ["min_tvl", "min_fdv", "base_fee_max", 
+                      "fee_tvl_ratio_24h_min", "volume_1h_min", 
+                      "volume_5m_min", "dynamic_fee_tvl_ratio_min"]:
             current_filters[param] = float(value)
-        elif param == "max_age":
-            parse_age(value)  # Проверка формата
-            current_filters[param] = value
-        elif param == "verified_only":
-            current_filters[param] = value.lower() in ["true", "1", "yes"]
         
-        await update.message.reply_text(f"✅ {param} обновлен: {current_filters[param]}")
+        else:
+            raise ValueError(f"Неизвестный параметр: {param}")
+
+        await update.message.reply_text(f"✅ {param} обновлен: {value}")
+    
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
-# Вспомогательные функции
-def parse_age(age_str: str) -> timedelta:
-    units = {'d': 'days', 'h': 'hours', 'm': 'minutes'}
-    unit = age_str[-1]
-    value = int(age_str[:-1])
-    return timedelta(**{units[unit]: value})
-
-# Логика работы с API
+# Основная логика работы с API
 async def fetch_pools():
     try:
         params = {
             "sort_key": "volume",
             "order_by": "desc",
-            "limit": 50,
-            "page": 0,
-            "hide_low_tvl": current_filters["min_tvl"],
-            "include_unknown": not current_filters["verified_only"]
+            "limit": 100,
+            "include_unknown": not current_filters["verified_only"],
+            "include_token_mints": [
+                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+                if current_filters["stable_coin"] == "USDC"
+                else "So11111111111111111111111111111111111111112"
+            ]
         }
-        async with httpx.AsyncClient(
-            timeout=30.0,
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
-        ) as client:
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(API_URL, params=params)
             response.raise_for_status()
             data = response.json()
-            logger.info(f"Данные от API: {data}")  # Логируем полученные данные
-            return data.get("pairs", [])
+            return data.get("groups", [{}])[0].get("pairs", [])
+    
     except Exception as e:
         logger.error(f"API Error: {str(e)}")
         return []
 
 def filter_pool(pool: dict) -> bool:
     try:
-        created_at = datetime.fromisoformat(pool['created_at'].replace("Z", "+00:00"))
-        age = datetime.now(pytz.utc) - created_at
-        result = all([
-            float(pool.get('liquidity', 0)) >= current_filters['min_tvl'],
-            float(pool.get('trade_volume_24h', 0)) >= current_filters['min_volume_24h'],
-            float(pool.get('apr', 0)) >= current_filters['min_apr'],
-            age <= parse_age(current_filters['max_age'])
-        ])
-        logger.info(f"Пул {pool.get('address')} прошел фильтрацию: {result}")  # Логируем результат фильтрации
-        return result
+        pool_metrics = {
+            "bin_step": pool.get("bin_step", 999),
+            "base_fee": float(pool.get("base_fee_percentage", 100)),
+            "tvl": float(pool.get("liquidity", 0)),
+            "fee_24h": float(pool.get("fees_24h", 0)),
+            "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
+            "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
+            "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0))
+        }
+
+        conditions = [
+            pool_metrics["bin_step"] in current_filters["bin_steps"],
+            pool_metrics["base_fee"] <= current_filters["base_fee_max"],
+            (pool_metrics["fee_24h"] / pool_metrics["tvl"] * 100) >= current_filters["fee_tvl_ratio_24h_min"],
+            pool_metrics["volume_1h"] >= current_filters["volume_1h_min"],
+            pool_metrics["volume_5m"] >= current_filters["volume_5m_min"],
+            pool_metrics["dynamic_fee"] >= current_filters["dynamic_fee_tvl_ratio_min"],
+            pool_metrics["tvl"] >= current_filters["min_tvl"]
+        ]
+
+        return all(conditions)
+    
     except Exception as e:
         logger.error(f"Filter Error: {str(e)}")
         return False
 
-def format_pool_message(pool: dict, created_at: datetime) -> str:
-    address = pool.get('address', '')
-    mint_x = pool.get('mint_x', '?')
-    mint_y = pool.get('mint_y', '?')
-    liquidity = float(pool.get('liquidity', 0))
-    volume_24h = float(pool.get('trade_volume_24h', 0))
-    apr = float(pool.get('apr', 0))
-    bin_step = pool.get('bin_step', '?')
-    fees = pool.get('fees', {})
+def format_pool_message(pool: dict) -> str:
+    metrics = {
+        "address": pool.get("address", "N/A"),
+        "pair": f"{pool.get('mint_x', '?')}-{pool.get('mint_y', '?')}",
+        "tvl": float(pool.get("liquidity", 0)),
+        "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
+        "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
+        "fee_tvl_ratio": (float(pool.get("fees_24h", 0)) / float(pool.get("liquidity", 1)) * 100,
+        "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)),
+        "bin_step": pool.get("bin_step", "N/A"),
+        "base_fee": pool.get("base_fee_percentage", "N/A")
+    }
 
-    message = (
-        f"🔥 Обнаружены пулы с высокой доходностью 🔥\n\n"
-        f"🔥 {mint_x}-{mint_y} (https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}) | "
-        f"создан ~{created_at.strftime('%d.%m.%Y %H:%M')} | "
-        f"RugCheck: 🟢1 (https://rugcheck.xyz/tokens/{mint_x})\n"
-        f"🔗 Meteora (https://app.meteora.ag/dlmm/{address}) | "
-        f"DexScreener (https://dexscreener.com/solana/{address}) | "
-        f"GMGN (https://gmgn.ai/sol/token/{mint_x}) | "
-        f"TrenchRadar (https://trench.bot/bundles/{mint_x}?all=true)\n"
-        f"💎 Market Cap: ${liquidity / 1e6:.1f}M 🔹TVL: ${liquidity / 1e3:.1f}K\n"
-        f"📊 Объем: ${volume_24h / 1e3:.1f}K 🔸 Bin Step: {bin_step} 💵 Fees: {fees.get('min_30', '?')}% | {fees.get('hour_1', '?')}%\n"
-        f"🤑 Принт (5m dynamic fee/TVL): {(fees.get('min_30', 0) / liquidity * 100):.2f}%\n"
-        f"🪙 Токен (https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x}): {mint_x}\n"
-        f"🤐 Mute 1h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_1h) | "
-        f"Mute 24h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_24h) | "
-        f"Mute forever (https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_forever)"
+    return (
+        f"🔥 Новый пул по вашим критериям!\n\n"
+        f"Пара: {metrics['pair']}\n"
+        f"TVL: ${metrics['tvl']:,.2f}\n"
+        f"Объем (1ч): ${metrics['volume_1h']:,.2f}\n"
+        f"Объем (5м): ${metrics['volume_5m']:,.2f}\n"
+        f"Комиссия/TVL: {metrics['fee_tvl_ratio']:.2f}%\n"
+        f"Динамическая комиссия: {metrics['dynamic_fee']:.2f}%\n"
+        f"Bin Step: {metrics['bin_step']}\n"
+        f"Базовая комиссия: {metrics['base_fee']}%\n\n"
+        f"🔗 [Meteora](https://app.meteora.ag/dlmm/{metrics['address']}) | "
+        f"[DexScreener](https://dexscreener.com/solana/{metrics['address']})"
     )
-    return message
 
 async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
     global last_checked_pools
-    logger.info("Запуск проверки новых пулов...")
+    logger.info("Запуск проверки пулов...")
 
     try:
         pools = await fetch_pools()
-        logger.info(f"Получено пулов: {len(pools)}")
-
-        current_ids = {p['address'] for p in pools}
-        new_pools = [p for p in pools if p['address'] not in last_checked_pools and filter_pool(p)]
+        new_pools = [p for p in pools if p["address"] not in last_checked_pools and filter_pool(p)]
 
         if new_pools:
-            logger.info(f"Найдено новых пулов: {len(new_pools)}")
+            logger.info(f"Найдено {len(new_pools)} новых пулов")
             for pool in new_pools:
-                created_at = datetime.fromisoformat(pool['created_at'].replace("Z", "+00:00"))
-                moscow_time = created_at.astimezone(pytz.timezone('Europe/Moscow'))
-                message = format_pool_message(pool, moscow_time)  # Форматируем сообщение
-
+                message = format_pool_message(pool)
                 await context.bot.send_message(
                     chat_id=USER_ID,
                     text=message,
-                    parse_mode='Markdown',
+                    parse_mode="Markdown",
                     disable_web_page_preview=True
                 )
-            last_checked_pools = current_ids
+            last_checked_pools.update(p["address"] for p in pools)
         else:
-            logger.info("Новых пулов не найдено.")
+            logger.info("Новых подходящих пулов не найдено")
+    
     except Exception as e:
-        logger.error(f"POOL CHECK ERROR: {str(e)}", exc_info=True)
+        logger.error(f"Ошибка проверки: {str(e)}")
         await context.bot.send_message(
             chat_id=USER_ID,
-            text="⚠️ Произошла ошибка при проверке пулов"
+            text="⚠️ Ошибка при проверке пулов"
         )
 
-# Добавляем глобальный обработчик ошибок
-application.add_error_handler(lambda _, __: logger.error("Global error"))
-
-# Регистрация команд
+# Регистрация обработчиков
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("filters", show_filters))
 application.add_handler(CommandHandler("setfilter", set_filter))
 application.add_handler(CommandHandler("checkpools", check_new_pools))
 
 # Планировщик задач
-application.job_queue.run_repeating(check_new_pools, interval=300, first=10)  # Проверка каждые 5 минут
+application.job_queue.run_repeating(check_new_pools, interval=300, first=10)
 
 # Вебхук
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 async def webhook():
     try:
-        logger.info("Получен вебхук")
-        data = await request.get_json()  # Добавлен await
+        data = await request.get_json()
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
         return '', 200
     except Exception as e:
-        logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
+        logger.error(f"Webhook Error: {str(e)}")
         return '', 500
 
-@app.route('/healthcheck', methods=['GET', 'POST'])
+@app.route('/healthcheck')
 def healthcheck():
-    return {
-        "status": "OK",
-        "bot_initialized": application.initialized,
-        "last_update": datetime.utcnow().isoformat()
-    }, 200
+    return {"status": "OK"}, 200
 
-@app.route('/')
-async def home():
-    return "🤖 Бот активен! Используйте Telegram для управления"
-
-# Запуск приложения
 if __name__ == "__main__":
-    # Запуск Quart с поддержкой асинхронности
     app.run(host='0.0.0.0', port=PORT)
