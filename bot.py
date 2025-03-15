@@ -47,14 +47,13 @@ application = (
     .build()
 )
 
-# Инициализация асинхронных компонентов
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-loop.run_until_complete(application.initialize())  # Инициализация приложения
-loop.run_until_complete(application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"))  # Установка вебхука
-logger.info("Приложение и вебхук успешно инициализированы")
-
 app = Flask(__name__)
+
+# Асинхронная функция для инициализации
+async def startup():
+    await application.initialize()
+    await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+    logger.info("Приложение и вебхук успешно инициализированы")
 
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,12 +98,6 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {param} обновлен: {current_filters[param]}")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-
-async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != USER_ID:
-        return
-    await update.message.reply_text("🔍 Проверяю пулы...")
-    await check_new_pools(context)
 
 # Вспомогательные функции
 def parse_age(age_str: str) -> timedelta:
@@ -210,14 +203,12 @@ application.job_queue.run_repeating(check_new_pools, interval=300, first=10)  # 
 
 # Вебхук
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-def webhook():
+async def webhook():
     try:
         logger.info("Получен вебхук")
         data = request.get_json()
         update = Update.de_json(data, application.bot)
-        
-        # Запуск асинхронной задачи
-        asyncio.run(application.process_update(update))
+        await application.process_update(update)
         return '', 200
     except Exception as e:
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
