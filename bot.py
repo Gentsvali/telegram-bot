@@ -8,7 +8,6 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import httpx
 import pytz
-from threading import Thread  # Импортируем Thread
 
 # Настройка логгера
 logging.basicConfig(
@@ -204,15 +203,12 @@ application.job_queue.run_repeating(check_new_pools, interval=300, first=10)
 
 # Вебхук
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-def webhook():
+async def webhook():
     try:
+        logger.info("Получен вебхук")
         data = request.get_json()
         update = Update.de_json(data, application.bot)
-        
-        # Создаем новый event loop для каждого запроса
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.process_update(update))
+        await application.process_update(update)
         return '', 200
     except Exception as e:
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
@@ -230,14 +226,6 @@ def healthcheck():
 def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
 
-# Запуск планировщика в отдельном потоке
-def start_scheduler():
-    application.run_polling()
-
 if __name__ == "__main__":
-    # Запуск планировщика в отдельном потоке
-    scheduler_thread = Thread(target=start_scheduler)
-    scheduler_thread.start()
-
-    # Запуск Flask
-    app.run(host='0.0.0.0', port=PORT)
+    # Запуск Flask с поддержкой асинхронности
+    app.run(host='0.0.0.0', port=PORT, threaded=True)
