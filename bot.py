@@ -205,17 +205,17 @@ application.add_handler(CommandHandler("filters", show_filters))
 application.add_handler(CommandHandler("setfilter", set_filter))
 application.add_handler(CommandHandler("checkpools", check_pools))  # Новая команда для проверки пулов
 
+# Планировщик задач
+application.job_queue.run_repeating(check_new_pools, interval=300, first=10)  # Проверка каждые 5 минут
+
 # Вебхук
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-def webhook():
+async def webhook():
     try:
+        logger.info("Получен вебхук")
         data = request.get_json()
         update = Update.de_json(data, application.bot)
-        
-        # Создаем новый event loop для каждого запроса
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.process_update(update))
+        await application.process_update(update)
         return '', 200
     except Exception as e:
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
