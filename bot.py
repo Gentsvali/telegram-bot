@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 from datetime import datetime, timedelta
 from quart import Quart, request
 from dotenv import load_dotenv
@@ -153,32 +152,52 @@ def filter_pool(pool: dict) -> bool:
         logger.error(f"Filter Error: {str(e)}")
         return False
 
+def format_pool_message(pool: dict, created_at: datetime) -> str:
+    address = pool.get('address', '')
+    mint_x = pool.get('mint_x', '?')
+    mint_y = pool.get('mint_y', '?')
+    liquidity = float(pool.get('liquidity', 0))
+    volume_24h = float(pool.get('trade_volume_24h', 0))
+    apr = float(pool.get('apr', 0))
+    bin_step = pool.get('bin_step', '?')
+    fees = pool.get('fees', {})
+
+    message = (
+        f"🔥 Обнаружены пулы с высокой доходностью 🔥\n\n"
+        f"🔥 {mint_x}-{mint_y} (https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}) | "
+        f"создан ~{created_at.strftime('%d.%m.%Y %H:%M')} | "
+        f"RugCheck: 🟢1 (https://rugcheck.xyz/tokens/{mint_x})\n"
+        f"🔗 Meteora (https://app.meteora.ag/dlmm/{address}) | "
+        f"DexScreener (https://dexscreener.com/solana/{address}) | "
+        f"GMGN (https://gmgn.ai/sol/token/{mint_x}) | "
+        f"TrenchRadar (https://trench.bot/bundles/{mint_x}?all=true)\n"
+        f"💎 Market Cap: ${liquidity / 1e6:.1f}M 🔹TVL: ${liquidity / 1e3:.1f}K\n"
+        f"📊 Объем: ${volume_24h / 1e3:.1f}K 🔸 Bin Step: {bin_step} 💵 Fees: {fees.get('min_30', '?')}% | {fees.get('hour_1', '?')}%\n"
+        f"🤑 Принт (5m dynamic fee/TVL): {(fees.get('min_30', 0) / liquidity * 100):.2f}%\n"
+        f"🪙 Токен (https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x}): {mint_x}\n"
+        f"🤐 Mute 1h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_1h) | "
+        f"Mute 24h (https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_24h) | "
+        f"Mute forever (https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_forever)"
+    )
+    return message
+
 async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
     global last_checked_pools
-    logger.info("Запуск проверки новых пулов...")  # Логируем запуск функции
-    
+    logger.info("Запуск проверки новых пулов...")
+
     try:
         pools = await fetch_pools()
-        logger.info(f"Получено пулов: {len(pools)}")  # Логируем количество полученных пулов
-        
+        logger.info(f"Получено пулов: {len(pools)}")
+
         current_ids = {p['address'] for p in pools}
         new_pools = [p for p in pools if p['address'] not in last_checked_pools and filter_pool(p)]
-        
+
         if new_pools:
-            logger.info(f"Найдено новых пулов: {len(new_pools)}")  # Логируем количество новых пулов
+            logger.info(f"Найдено новых пулов: {len(new_pools)}")
             for pool in new_pools:
                 created_at = datetime.fromisoformat(pool['created_at'].replace("Z", "+00:00"))
                 moscow_time = created_at.astimezone(pytz.timezone('Europe/Moscow'))
-                message = (
-                    f"🔥 Новый пул: {pool.get('mint_x', '?')}/{pool.get('mint_y', '?')}\n"
-                    f"🕒 Создан: {moscow_time.strftime('%d.%m.%Y %H:%M')}\n"
-                    f"💎 TVL: ${float(pool.get('liquidity', 0)):,.2f}\n"
-                    f"📈 Объем 24ч: ${float(pool.get('trade_volume_24h', 0)):,.2f}\n"
-                    f"🎯 APR: {float(pool.get('apr', 0)):.1f}%\n"
-                    f"🔗 [Meteora](https://app.meteora.ag/dlmm/{pool.get('address', '')})"
-                )
-
-                logger.info(f"Отправка сообщения пользователю с ID: {USER_ID}")
+                message = format_pool_message(pool, moscow_time)  # Форматируем сообщение
 
                 await context.bot.send_message(
                     chat_id=USER_ID,
@@ -188,7 +207,7 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
                 )
             last_checked_pools = current_ids
         else:
-            logger.info("Новых пулов не найдено.")  # Логируем, если новых пулов нет
+            logger.info("Новых пулов не найдено.")
     except Exception as e:
         logger.error(f"POOL CHECK ERROR: {str(e)}", exc_info=True)
         await context.bot.send_message(
