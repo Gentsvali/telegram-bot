@@ -196,7 +196,7 @@ application.add_error_handler(lambda _, __: logger.error("Global error"))
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("filters", show_filters))
 application.add_handler(CommandHandler("setfilter", set_filter))
-application.add_handler(CommandHandler("checkpools", check_pools))  # Новая команда для проверки пулов
+application.add_handler(CommandHandler("checkpools", check_new_pools))
 
 # Планировщик задач
 application.job_queue.run_repeating(check_new_pools, interval=300, first=10)  # Проверка каждые 5 минут
