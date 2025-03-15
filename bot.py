@@ -203,13 +203,17 @@ def webhook():
     except Exception as e:
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
         return '', 500  
-                                                                                                       @app.route('/healthcheck', methods=['GET', 'POST'])
+
+# Эндпоинт для проверки здоровья
+@app.route('/healthcheck', methods=['GET', 'POST'])
 def healthcheck():
     return {
         "status": "OK",
         "bot_initialized": application.initialized,
         "last_update": datetime.utcnow().isoformat()
     }, 200
+
+# Главная страница
 @app.route('/')
 def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
