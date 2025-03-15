@@ -8,6 +8,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import httpx
 import pytz
+from threading import Thread  # Импортируем Thread
 
 # Настройка логгера
 logging.basicConfig(
@@ -146,6 +147,7 @@ def filter_pool(pool: dict) -> bool:
     except Exception as e:
         logger.error(f"Filter Error: {str(e)}")
         return False
+
 async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
     global last_checked_pools
     logger.info("Запуск проверки новых пулов...")  # Логируем запуск функции
@@ -172,7 +174,6 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 logger.info(f"Отправка сообщения пользователю с ID: {USER_ID}")
-
 
                 await context.bot.send_message(
                     chat_id=USER_ID,
@@ -229,7 +230,14 @@ def healthcheck():
 def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
 
-# Запуск приложения
+# Запуск планировщика в отдельном потоке
+def start_scheduler():
+    application.run_polling()
+
 if __name__ == "__main__":
+    # Запуск планировщика в отдельном потоке
+    scheduler_thread = Thread(target=start_scheduler)
+    scheduler_thread.start()
+
     # Запуск Flask
     app.run(host='0.0.0.0', port=PORT)
