@@ -49,11 +49,18 @@ application = (
 
 app = Quart(__name__)
 
-# Асинхронная функция для инициализации
+# Обработчики событий Quart
+@app.before_serving
 async def startup():
     await application.initialize()
+    await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
     logger.info("Приложение и вебхук успешно инициализированы")
+
+@app.after_serving
+async def shutdown():
+    await application.stop()
+    await application.shutdown()
 
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
