@@ -189,7 +189,7 @@ def format_pool_message(pool: dict) -> str:
         "tvl": float(pool.get("liquidity", 0)),
         "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
         "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
-        "fee_tvl_ratio": (float(pool.get("fees_24h", 0)) / float(pool.get("liquidity", 1)) * 100,
+        "fee_tvl_ratio": float(pool.get("fees_24h", 0)) / float(pool.get("liquidity", 1)) * 100,
         "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)),
         "bin_step": pool.get("bin_step", "N/A"),
         "base_fee": pool.get("base_fee_percentage", "N/A")
