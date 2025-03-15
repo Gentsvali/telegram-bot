@@ -2,7 +2,7 @@ import os
 import logging
 import asyncio
 from datetime import datetime, timedelta
-from flask import Flask, request
+from quart import Quart, request
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -47,7 +47,7 @@ application = (
     .build()
 )
 
-app = Flask(__name__)
+app = Quart(__name__)
 
 # Асинхронная функция для инициализации
 async def startup():
@@ -223,10 +223,10 @@ def healthcheck():
     }, 200
 
 @app.route('/')
-def home():
+async def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
 
 # Запуск приложения
 if __name__ == "__main__":
-    # Запуск Flask с поддержкой асинхронности
+    # Запуск Quart с поддержкой асинхронности
     app.run(host='0.0.0.0', port=PORT)
