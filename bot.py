@@ -124,7 +124,9 @@ async def fetch_pools():
         ) as client:
             response = await client.get(API_URL, params=params)
             response.raise_for_status()
-            return response.json().get("pairs", [])
+            data = response.json()
+            logger.info(f"Данные от API: {data}")  # Логируем полученные данные
+            return data.get("pairs", [])
     except Exception as e:
         logger.error(f"API Error: {str(e)}")
         return []
@@ -133,24 +135,30 @@ def filter_pool(pool: dict) -> bool:
     try:
         created_at = datetime.fromisoformat(pool['created_at'].replace("Z", "+00:00"))
         age = datetime.now(pytz.utc) - created_at
-        return all([
+        result = all([
             float(pool.get('liquidity', 0)) >= current_filters['min_tvl'],
             float(pool.get('trade_volume_24h', 0)) >= current_filters['min_volume_24h'],
             float(pool.get('apr', 0)) >= current_filters['min_apr'],
             age <= parse_age(current_filters['max_age'])
         ])
+        logger.info(f"Пул {pool.get('address')} прошел фильтрацию: {result}")  # Логируем результат фильтрации
+        return result
     except Exception as e:
         logger.error(f"Filter Error: {str(e)}")
         return False
-
 async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
     global last_checked_pools
+    logger.info("Запуск проверки новых пулов...")  # Логируем запуск функции
+    
     try:
         pools = await fetch_pools()
+        logger.info(f"Получено пулов: {len(pools)}")  # Логируем количество полученных пулов
+        
         current_ids = {p['address'] for p in pools}
         new_pools = [p for p in pools if p['address'] not in last_checked_pools and filter_pool(p)]
         
         if new_pools:
+            logger.info(f"Найдено новых пулов: {len(new_pools)}")  # Логируем количество новых пулов
             for pool in new_pools:
                 created_at = datetime.fromisoformat(pool['created_at'].replace("Z", "+00:00"))
                 moscow_time = created_at.astimezone(pytz.timezone('Europe/Moscow'))
@@ -162,6 +170,10 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
                     f"🎯 APR: {float(pool.get('apr', 0)):.1f}%\n"
                     f"🔗 [Meteora](https://app.meteora.ag/dlmm/{pool.get('address', '')})"
                 )
+
+                logger.info(f"Отправка сообщения пользователю с ID: {USER_ID}")
+
+
                 await context.bot.send_message(
                     chat_id=USER_ID,
                     text=message,
@@ -169,7 +181,8 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
                     disable_web_page_preview=True
                 )
             last_checked_pools = current_ids
-            logger.info(f"Отправлено уведомлений: {len(new_pools)}")
+        else:
+            logger.info("Новых пулов не найдено.")  # Логируем, если новых пулов нет
     except Exception as e:
         logger.error(f"POOL CHECK ERROR: {str(e)}", exc_info=True)
         await context.bot.send_message(
