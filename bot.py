@@ -62,7 +62,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🚀 Бот для отслеживания новых пулов Meteora!\n"
-        "Команды:\n/filters - текущие настройки\n/setfilter [параметр] [значение]"
+        "Команды:\n/filters - текущие настройки\n/setfilter [параметр] [значение]\n/checkpools - проверить пулы"
     )
 
 async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,6 +99,12 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {param} обновлен: {current_filters[param]}")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != USER_ID:
+        return
+    await update.message.reply_text("🔍 Проверяю пулы...")
+    await check_new_pools(context)
 
 # Вспомогательные функции
 def parse_age(age_str: str) -> timedelta:
@@ -197,18 +203,19 @@ application.add_error_handler(lambda _, __: logger.error("Global error"))
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("filters", show_filters))
 application.add_handler(CommandHandler("setfilter", set_filter))
-
-# Планировщик задач
-application.job_queue.run_repeating(check_new_pools, interval=300, first=10)
+application.add_handler(CommandHandler("checkpools", check_pools))  # Новая команда для проверки пулов
 
 # Вебхук
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-async def webhook():
+def webhook():
     try:
-        logger.info("Получен вебхук")
         data = request.get_json()
         update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        
+        # Создаем новый event loop для каждого запроса
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(application.process_update(update))
         return '', 200
     except Exception as e:
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
@@ -226,6 +233,7 @@ def healthcheck():
 def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
 
+# Запуск приложения
 if __name__ == "__main__":
-    # Запуск Flask с поддержкой асинхронности
-    app.run(host='0.0.0.0', port=PORT, threaded=True)
+    # Запуск Flask
+    app.run(host='0.0.0.0', port=PORT)
