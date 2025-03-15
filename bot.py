@@ -210,12 +210,14 @@ application.job_queue.run_repeating(check_new_pools, interval=300, first=10)  # 
 
 # Вебхук
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-async def webhook():
+def webhook():
     try:
         logger.info("Получен вебхук")
         data = request.get_json()
         update = Update.de_json(data, application.bot)
-        await application.process_update(update)
+        
+        # Запуск асинхронной задачи
+        asyncio.run(application.process_update(update))
         return '', 200
     except Exception as e:
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
@@ -235,5 +237,5 @@ def home():
 
 # Запуск приложения
 if __name__ == "__main__":
-    # Запуск Flask
+    # Запуск Flask с поддержкой асинхронности
     app.run(host='0.0.0.0', port=PORT)
