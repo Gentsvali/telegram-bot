@@ -42,19 +42,19 @@ application = (
     ApplicationBuilder()
     .token(TELEGRAM_TOKEN)
     .concurrent_updates(True)
-    .http_version("1.1")  # Явное указание версии HTTP
+    .http_version("1.1")
     .get_updates_http_version("1.1")
     .build()
 )
 
-app = Flask(__name__)
+# Инициализация асинхронных компонентов
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+loop.run_until_complete(application.initialize())  # Инициализация приложения
+loop.run_until_complete(application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"))  # Установка вебхука
+logger.info("Приложение и вебхук успешно инициализированы")
 
-# Асинхронная инициализация
-async def initialize():
-    """Инициализация приложения и вебхука"""
-    await application.initialize()
-    await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-    logger.info("Приложение и вебхук успешно инициализированы")
+app = Flask(__name__)
 
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -170,7 +170,7 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
                 )
             last_checked_pools = current_ids
             logger.info(f"Отправлено уведомлений: {len(new_pools)}")
-    except Exception as e:  # Исправленный отступ
+    except Exception as e:
         logger.error(f"POOL CHECK ERROR: {str(e)}", exc_info=True)
         await context.bot.send_message(
             chat_id=USER_ID,
@@ -204,7 +204,6 @@ def webhook():
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
         return '', 500  
 
-# Эндпоинт для проверки здоровья
 @app.route('/healthcheck', methods=['GET', 'POST'])
 def healthcheck():
     return {
@@ -213,17 +212,11 @@ def healthcheck():
         "last_update": datetime.utcnow().isoformat()
     }, 200
 
-# Главная страница
 @app.route('/')
 def home():
     return "🤖 Бот активен! Используйте Telegram для управления"
 
 # Запуск приложения
 if __name__ == "__main__":
-    # Инициализация асинхронных компонентов
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(initialize())
-    
     # Запуск Flask
     app.run(host='0.0.0.0', port=PORT)
