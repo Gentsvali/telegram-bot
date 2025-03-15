@@ -206,13 +206,13 @@ application.job_queue.run_repeating(check_new_pools, interval=300, first=10)  # 
 async def webhook():
     try:
         logger.info("Получен вебхук")
-        data = request.get_json()
+        data = await request.get_json()  # Добавлен await
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
         return '', 200
     except Exception as e:
         logger.error(f"CRITICAL ERROR: {str(e)}", exc_info=True)
-        return '', 500  
+        return '', 500
 
 @app.route('/healthcheck', methods=['GET', 'POST'])
 def healthcheck():
