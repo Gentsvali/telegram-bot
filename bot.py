@@ -170,7 +170,7 @@ async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
                 )
             last_checked_pools = current_ids
             logger.info(f"Отправлено уведомлений: {len(new_pools)}")
-     except Exception as e:
+    except Exception as e:  # Исправленный отступ
         logger.error(f"POOL CHECK ERROR: {str(e)}", exc_info=True)
         await context.bot.send_message(
             chat_id=USER_ID,
