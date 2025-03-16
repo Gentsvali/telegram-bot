@@ -27,8 +27,8 @@ PORT = int(os.environ.get("PORT", 10000))
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
 DEFAULT_FILTERS = {
-    "stable_coin": "USDC",  # USDC или SOL
-    "bin_steps": [1, 5, 10, 50],
+    "stable_coin": "USDC",
+    "bin_steps": [20, 80, 100, 125, 250],
     "min_tvl": 10000.0,
     "min_fdv": 500000.0,
     "base_fee_max": 1.0,
@@ -50,6 +50,11 @@ application = (
     .get_updates_http_version("1.1")
     .build()
 )
+
+# Добавление обработчика ошибок
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Глобальная ошибка: {context.error}")
+application.add_error_handler(error_handler)
 
 app = Quart(__name__)
 
@@ -107,7 +112,6 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         param = args[0].lower()
         value = args[1]
 
-        # Обработка разных типов параметров
         if param == "stable_coin":
             if value.upper() not in ["USDC", "SOL"]:
                 raise ValueError("Допустимые значения: USDC или SOL")
@@ -156,20 +160,29 @@ async def fetch_pools():
 
 def filter_pool(pool: dict) -> bool:
     try:
+        # Защита от нулевого TVL
+        tvl = float(pool.get("liquidity", 0))
+        if tvl <= 0:
+            return False
+
+        # Основные метрики с проверкой значений
         pool_metrics = {
             "bin_step": pool.get("bin_step", 999),
             "base_fee": float(pool.get("base_fee_percentage", 100)),
-            "tvl": float(pool.get("liquidity", 0)),
             "fee_24h": float(pool.get("fees_24h", 0)),
             "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
             "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
-            "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0))
+            "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)),
+            "tvl": tvl
         }
+
+        # Расчет комиссии с защитой от деления на ноль
+        fee_tvl_ratio = (pool_metrics["fee_24h"] / pool_metrics["tvl"] * 100) if pool_metrics["tvl"] > 0 else 0
 
         conditions = [
             pool_metrics["bin_step"] in current_filters["bin_steps"],
             pool_metrics["base_fee"] <= current_filters["base_fee_max"],
-            (pool_metrics["fee_24h"] / pool_metrics["tvl"] * 100) >= current_filters["fee_tvl_ratio_24h_min"],
+            fee_tvl_ratio >= current_filters["fee_tvl_ratio_24h_min"],
             pool_metrics["volume_1h"] >= current_filters["volume_1h_min"],
             pool_metrics["volume_5m"] >= current_filters["volume_5m_min"],
             pool_metrics["dynamic_fee"] >= current_filters["dynamic_fee_tvl_ratio_min"],
@@ -183,50 +196,68 @@ def filter_pool(pool: dict) -> bool:
         return False
 
 def format_pool_message(pool: dict) -> str:
-    metrics = {
-        "address": pool.get("address", "N/A"),
-        "pair": f"{pool.get('mint_x', '?')}-{pool.get('mint_y', '?')}",
-        "tvl": float(pool.get("liquidity", 0)),
-        "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
-        "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
-        "fee_tvl_ratio": float(pool.get("fees_24h", 0)) / float(pool.get("liquidity", 1)) * 100,
-        "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)),
-        "bin_step": pool.get("bin_step", "N/A"),
-        "base_fee": pool.get("base_fee_percentage", "N/A")
-    }
+    try:
+        tvl = float(pool.get("liquidity", 0))
+        metrics = {
+            "address": pool.get("address", "N/A"),
+            "pair": f"{pool.get('mint_x', '?')}-{pool.get('mint_y', '?')}",
+            "tvl": tvl,
+            "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
+            "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
+            "fee_tvl_ratio": (float(pool.get("fees_24h", 0)) / tvl * 100) if tvl > 0 else 0,
+            "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)),
+            "bin_step": pool.get("bin_step", "N/A"),
+            "base_fee": pool.get("base_fee_percentage", "N/A")
+        }
 
-    return (
-        f"🔥 Новый пул по вашим критериям!\n\n"
-        f"Пара: {metrics['pair']}\n"
-        f"TVL: ${metrics['tvl']:,.2f}\n"
-        f"Объем (1ч): ${metrics['volume_1h']:,.2f}\n"
-        f"Объем (5м): ${metrics['volume_5m']:,.2f}\n"
-        f"Комиссия/TVL: {metrics['fee_tvl_ratio']:.2f}%\n"
-        f"Динамическая комиссия: {metrics['dynamic_fee']:.2f}%\n"
-        f"Bin Step: {metrics['bin_step']}\n"
-        f"Базовая комиссия: {metrics['base_fee']}%\n\n"
-        f"🔗 [Meteora](https://app.meteora.ag/dlmm/{metrics['address']}) | "
-        f"[DexScreener](https://dexscreener.com/solana/{metrics['address']})"
-    )
+        return (
+            f"🔥 Новый пул по вашим критериям!\n\n"
+            f"Пара: {metrics['pair']}\n"
+            f"TVL: ${metrics['tvl']:,.2f}\n"
+            f"Объем (1ч): ${metrics['volume_1h']:,.2f}\n"
+            f"Объем (5м): ${metrics['volume_5m']:,.2f}\n"
+            f"Комиссия/TVL: {metrics['fee_tvl_ratio']:.2f}%\n"
+            f"Динамическая комиссия: {metrics['dynamic_fee']:.2f}%\n"
+            f"Bin Step: {metrics['bin_step']}\n"
+            f"Базовая комиссия: {metrics['base_fee']}%\n\n"
+            f"🔗 [Meteora](https://app.meteora.ag/dlmm/{metrics['address']}) | "
+            f"[DexScreener](https://dexscreener.com/solana/{metrics['address']})"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка форматирования: {str(e)}")
+        return "⚠️ Ошибка при формировании информации о пуле"
 
 async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
     global last_checked_pools
     logger.info("Запуск проверки пулов...")
 
     try:
+        if not context or not hasattr(context, 'bot'):
+            logger.error("Некорректный контекст")
+            return
+
         pools = await fetch_pools()
-        new_pools = [p for p in pools if p["address"] not in last_checked_pools and filter_pool(p)]
+        new_pools = []
+        
+        for pool in pools:
+            if pool["address"] not in last_checked_pools:
+                try:
+                    if filter_pool(pool):
+                        new_pools.append(pool)
+                except Exception as e:
+                    logger.error(f"Ошибка фильтрации пула {pool.get('address')}: {str(e)}")
 
         if new_pools:
             logger.info(f"Найдено {len(new_pools)} новых пулов")
             for pool in new_pools:
                 message = format_pool_message(pool)
-                await context.bot.send_message(
-                    chat_id=USER_ID,
-                    text=message,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
+                if message:
+                    await context.bot.send_message(
+                        chat_id=USER_ID,
+                        text=message,
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True
+                    )
             last_checked_pools.update(p["address"] for p in pools)
         else:
             logger.info("Новых подходящих пулов не найдено")
