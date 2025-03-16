@@ -9,7 +9,8 @@ import httpx
 import pytz
 from json import JSONDecodeError
 import json
-from pathlib import Path  # Добавляем импорт Path
+import psycopg2
+from psycopg2.extras import Json
 
 # Настройка логгера
 logging.basicConfig(
@@ -26,11 +27,12 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
+DATABASE_URL = os.getenv("DATABASE_URL")  # Новая переменная!
 
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
 DEFAULT_FILTERS = {
-    "disable_filters": False,  # Новый флаг для отключения фильтрации
+    "disable_filters": False,
     "stable_coin": "USDC",
     "bin_steps": [20, 80, 100, 125, 250],
     "min_tvl": 10000.0,
@@ -45,35 +47,57 @@ DEFAULT_FILTERS = {
 current_filters = DEFAULT_FILTERS.copy()
 last_checked_pools = set()
 
-# Файл для сохранения фильтров
-FILTERS_FILE = Path("filters.json")
-
+# Функции для работы с базой данных (ЗАМЕНИТЕ СТАРЫЕ ФУНКЦИИ НА ЭТИ)
+# ---------------------------------------------------------------
 def save_filters():
-    """Сохраняет текущие фильтры в файл."""
+    """Сохраняет фильтры в базу данных."""
     try:
-        with open(FILTERS_FILE, "w") as f:
-            json.dump(current_filters, f, indent=4)
-        logger.info(f"Фильтры успешно сохранены в {FILTERS_FILE}.")
-        logger.info(f"Содержимое файла: {current_filters}")
+        connection = psycopg2.connect(DATABASE_URL)
+        cursor = connection.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS filters (
+                id SERIAL PRIMARY KEY,
+                filters JSONB NOT NULL
+            );
+        """)
+        cursor.execute("INSERT INTO filters (filters) VALUES (%s)", (Json(current_filters),))
+        connection.commit()
+        logger.info("Фильтры сохранены в базу данных ✅")
     except Exception as e:
-        logger.error(f"Ошибка при сохранении фильтров: {e}")
+        logger.error(f"Ошибка сохранения: {e}")
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
 
 def load_filters():
-    """Загружает фильтры из файла."""
+    """Загружает фильтры из базы данных."""
     global current_filters
     try:
-        if FILTERS_FILE.exists():
-            with open(FILTERS_FILE, "r") as f:
-                loaded_filters = json.load(f)
-                current_filters = {**DEFAULT_FILTERS, **loaded_filters}
-            logger.info(f"Фильтры успешно загружены из {FILTERS_FILE}.")
-            logger.info(f"Загруженные фильтры: {current_filters}")
+        connection = psycopg2.connect(DATABASE_URL)
+        cursor = connection.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS filters (
+                id SERIAL PRIMARY KEY,
+                filters JSONB NOT NULL
+            );
+        """)
+        cursor.execute("SELECT filters FROM filters ORDER BY id DESC LIMIT 1")
+        result = cursor.fetchone()
+        
+        if result:
+            current_filters = {**DEFAULT_FILTERS, **result[0]}
+            logger.info("Фильтры загружены из базы данных ✅")
         else:
-            logger.info("Файл фильтров не найден, используются настройки по умолчанию.")
+            logger.info("Фильтров нет. Использую настройки по умолчанию.")
             current_filters = DEFAULT_FILTERS.copy()
     except Exception as e:
-        logger.error(f"Ошибка при загрузке фильтров: {e}")
-        current_filters = DEFAULT_FILTERS.copy() 
+        logger.error(f"Ошибка загрузки: {e}")
+        current_filters = DEFAULT_FILTERS.copy()
+    finally:
+        if connection:
+            cursor.close()
+            connection.close() 
 
 # Инициализация приложения Telegram
 application = (
