@@ -130,6 +130,7 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             raise ValueError(f"Неизвестный параметр: {param}")
 
+        save_filters()  # Сохраняем настройки
         await update.message.reply_text(f"✅ {param} обновлен: {value}")
     
     except Exception as e:
@@ -339,4 +340,5 @@ def healthcheck():
     return {"status": "OK"}, 200
 
 if __name__ == "__main__":
+    load_filters()  # Загружаем настройки
     app.run(host='0.0.0.0', port=PORT)
