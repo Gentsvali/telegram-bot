@@ -9,6 +9,7 @@ import httpx
 import pytz
 from json import JSONDecodeError
 import json
+from pathlib import Path  # Добавляем импорт Path
 
 # Настройка логгера
 logging.basicConfig(
@@ -29,8 +30,9 @@ PORT = int(os.environ.get("PORT", 10000))
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
 DEFAULT_FILTERS = {
-    "stable_coin": "USDC",  # USDC или SOL
-    "bin_steps": [20, 80, 100, 125, 250],  # Ваши настройки
+    "disable_filters": False,  # Новый флаг для отключения фильтрации
+    "stable_coin": "USDC",
+    "bin_steps": [20, 80, 100, 125, 250],
     "min_tvl": 10000.0,
     "min_fdv": 500000.0,
     "base_fee_max": 1.0,
@@ -42,6 +44,31 @@ DEFAULT_FILTERS = {
 }
 current_filters = DEFAULT_FILTERS.copy()
 last_checked_pools = set()
+
+# Файл для сохранения фильтров
+FILTERS_FILE = Path("filters.json")
+
+def save_filters():
+    """Сохраняет текущие фильтры в файл."""
+    try:
+        with open(FILTERS_FILE, "w") as f:
+            json.dump(current_filters, f, indent=4)
+        logger.info("Фильтры успешно сохранены.")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении фильтров: {e}")
+
+def load_filters():
+    """Загружает фильтры из файла."""
+    global current_filters
+    try:
+        if FILTERS_FILE.exists():
+            with open(FILTERS_FILE, "r") as f:
+                current_filters.update(json.load(f))
+            logger.info("Фильтры успешно загружены.")
+        else:
+            logger.info("Файл фильтров не найден, используются настройки по умолчанию.")
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фильтров: {e}")
 
 # Инициализация приложения Telegram
 application = (
@@ -142,22 +169,20 @@ async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_
         return
 
     try:
-        # Пытаемся распарсить JSON из сообщения
         new_filters = json.loads(update.message.text)
         
-        # Проверяем, что это действительно словарь с фильтрами
         if not isinstance(new_filters, dict):
             raise ValueError("Некорректный формат JSON. Ожидается словарь.")
 
-        # Обновляем текущие фильтры
         for key, value in new_filters.items():
             if key in current_filters:
                 current_filters[key] = value
             else:
                 logger.warning(f"Неизвестный параметр фильтра: {key}")
 
+        save_filters()  # Сохраняем настройки
         await update.message.reply_text("✅ Фильтры успешно обновлены!")
-        await show_filters(update, context)  # Показываем обновлённые фильтры
+        await show_filters(update, context)
 
     except JSONDecodeError:
         await update.message.reply_text("❌ Ошибка: Некорректный JSON. Проверьте формат.")
@@ -202,13 +227,15 @@ async def fetch_pools():
         return []
 
 def filter_pool(pool: dict) -> bool:
+    if current_filters.get("disable_filters", False):
+        return True  # Если фильтрация отключена, возвращаем True для всех пулов
+
     try:
-        # Защита от нулевого TVL
+        # Остальная логика фильтрации
         tvl = float(pool.get("liquidity", 0))
         if tvl <= 0:
             return False
 
-        # Основные метрики с проверкой значений
         pool_metrics = {
             "bin_step": pool.get("bin_step", 999),
             "base_fee": float(pool.get("base_fee_percentage", 100)),
@@ -219,7 +246,6 @@ def filter_pool(pool: dict) -> bool:
             "tvl": tvl
         }
 
-        # Расчет комиссии с защитой от деления на ноль
         fee_tvl_ratio = (pool_metrics["fee_24h"] / pool_metrics["tvl"] * 100) if pool_metrics["tvl"] > 0 else 0
 
         conditions = [
