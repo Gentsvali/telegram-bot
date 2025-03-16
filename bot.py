@@ -63,13 +63,17 @@ def load_filters():
     try:
         if FILTERS_FILE.exists():
             with open(FILTERS_FILE, "r") as f:
-                current_filters.update(json.load(f))
+                loaded_filters = json.load(f)
+                # Обновляем current_filters, но сохраняем значения по умолчанию для отсутствующих ключей
+                current_filters = {**DEFAULT_FILTERS, **loaded_filters}
             logger.info("Фильтры успешно загружены.")
+            logger.info(f"Загруженные фильтры: {current_filters}")
         else:
             logger.info("Файл фильтров не найден, используются настройки по умолчанию.")
+            current_filters = DEFAULT_FILTERS.copy()  # Используем копию DEFAULT_FILTERS
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}")
-
+        current_filters = DEFAULT_FILTERS.copy()  # В случае ошибки используем настройки по умолчанию
 # Инициализация приложения Telegram
 application = (
     ApplicationBuilder()
