@@ -4,9 +4,11 @@ from datetime import datetime, timedelta
 from quart import Quart, request
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler
 import httpx
 import pytz
+from json import JSONDecodeError
+import json
 
 # Настройка логгера
 logging.basicConfig(
@@ -27,8 +29,8 @@ PORT = int(os.environ.get("PORT", 10000))
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
 DEFAULT_FILTERS = {
-    "stable_coin": "USDC",
-    "bin_steps": [20, 80, 100, 125, 250],
+    "stable_coin": "USDC",  # USDC или SOL
+    "bin_steps": [20, 80, 100, 125, 250],  # Ваши настройки
     "min_tvl": 10000.0,
     "min_fdv": 500000.0,
     "base_fee_max": 1.0,
@@ -130,6 +132,46 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ {param} обновлен: {value}")
     
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+# Новый обработчик для JSON-сообщений
+async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != USER_ID:
+        return
+
+    try:
+        # Пытаемся распарсить JSON из сообщения
+        new_filters = json.loads(update.message.text)
+        
+        # Проверяем, что это действительно словарь с фильтрами
+        if not isinstance(new_filters, dict):
+            raise ValueError("Некорректный формат JSON. Ожидается словарь.")
+
+        # Обновляем текущие фильтры
+        for key, value in new_filters.items():
+            if key in current_filters:
+                current_filters[key] = value
+            else:
+                logger.warning(f"Неизвестный параметр фильтра: {key}")
+
+        await update.message.reply_text("✅ Фильтры успешно обновлены!")
+        await show_filters(update, context)  # Показываем обновлённые фильтры
+
+    except JSONDecodeError:
+        await update.message.reply_text("❌ Ошибка: Некорректный JSON. Проверьте формат.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+# Команда для получения текущих настроек в формате JSON
+async def get_filters_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != USER_ID:
+        return
+
+    try:
+        # Формируем JSON с текущими фильтрами
+        filters_json = json.dumps(current_filters, indent=4)
+        await update.message.reply_text(f"Текущие настройки фильтров:\n```json\n{filters_json}\n```", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
@@ -274,6 +316,8 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("filters", show_filters))
 application.add_handler(CommandHandler("setfilter", set_filter))
 application.add_handler(CommandHandler("checkpools", check_new_pools))
+application.add_handler(CommandHandler("getfiltersjson", get_filters_json))
+application.add_handler(MessageHandler(filters=None, callback=update_filters_via_json))
 
 # Планировщик задач
 application.job_queue.run_repeating(check_new_pools, interval=300, first=10)
