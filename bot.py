@@ -241,6 +241,16 @@ def filter_pool(pool: dict) -> bool:
         logger.error(f"Filter Error: {str(e)}")
         return False
 
+def get_non_sol_token(mint_x: str, mint_y: str) -> str:
+    """Возвращает токен, который не является Solana."""
+    sol_mint = "So11111111111111111111111111111111111111112"
+    if mint_x == sol_mint:
+        return mint_y
+    elif mint_y == sol_mint:
+        return mint_x
+    else:
+        return mint_x  # Если оба токена не Solana, возвращаем первый
+
 def format_pool_message(pool: dict) -> str:
     try:
         # Извлекаем данные из пула
@@ -255,22 +265,25 @@ def format_pool_message(pool: dict) -> str:
         bin_step = pool.get("bin_step", "N/A")
         base_fee = pool.get("base_fee_percentage", "N/A")
 
+        # Определяем токен, который не Solana
+        non_sol_token = get_non_sol_token(mint_x, mint_y)
+
+        # Формируем сокращённое название токенов (например, "doug-SOL")
+        token_pair = f"{non_sol_token[:4]}-{'SOL' if 'So11111111111111111111111111111111111111112' in [mint_x, mint_y] else 'OTHER'}"
+
         # Формируем сообщение
         message = (
             "🔥 *Обнаружены пулы с высокой доходностью* 🔥\n\n"
-            f"🔥 *{mint_x}-{mint_y}* ([🕒 ~5h](https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m)) | "
-            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{mint_x})\n"
+            f"🔥 *{token_pair}* ([🕒 ~5h](https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m)) | "
+            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{non_sol_token})\n"
             f"🔗 [Meteora](https://app.meteora.ag/dlmm/{address}) | "
-            f"[DexScreener](https://dexscreener.com/solana/{address}) | "
-            f"[GMGN](https://gmgn.ai/sol/token/{mint_x}) | "
-            f"[TrenchRadar](https://trench.bot/bundles/{mint_x}?all=true)\n"
+            f"[DexScreener](https://dexscreener.com/solana/{non_sol_token}) | "
+            f"[GMGN](https://gmgn.ai/sol/token/{non_sol_token}) | "
+            f"[TrenchRadar](https://trench.bot/bundles/{non_sol_token}?all=true)\n"
             f"💎 *Market Cap*: ${tvl / 1000:,.1f}K 🔹*TVL*: ${tvl:,.1f}K\n"
             f"📊 *Объем*: ${volume_1h:,.1f}K 🔸 *Bin Step*: {bin_step} 💵 *Fees*: {base_fee}% | {dynamic_fee:.2f}%\n"
             f"🤑 *Принт (5m dynamic fee/TVL)*: {fee_tvl_ratio:.2f}%\n"
-            f"🪙 *Токен*: [{mint_x}](https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x})\n"
-            f"🤐 *Mute*: [1h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_1h) | "
-            f"[24h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_24h) | "
-            f"[forever](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_forever)"
+            f"🪙 *Токен*: [{non_sol_token}](https://t.me/meteora_pool_tracker_bot/?start=pools={non_sol_token})"
         )
         return message
     except Exception as e:
