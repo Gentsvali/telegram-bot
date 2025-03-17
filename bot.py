@@ -297,7 +297,7 @@ def get_non_sol_token(mint_x: str, mint_y: str) -> str:
 def save_filters_to_file():
     """Сохраняет текущие фильтры в файл."""
     try:
-        with open(FILTERS_FILE, "w") as file:
+        with open(FILE_PATH, "w") as file:
             json.dump(current_filters, file, indent=4)
         logger.info("Фильтры сохранены в файл ✅")
     except Exception as e:
@@ -307,8 +307,8 @@ def load_filters_from_file():
     """Загружает фильтры из файла."""
     global current_filters
     try:
-        if os.path.exists(FILTERS_FILE):
-            with open(FILTERS_FILE, "r") as file:
+        if os.path.exists(FILE_PATH):
+            with open(FILE_PATH, "r") as file:
                 loaded_filters = json.load(file)
                 current_filters.update(loaded_filters)
                 logger.info("Фильтры загружены из файла ✅")
