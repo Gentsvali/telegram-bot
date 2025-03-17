@@ -335,41 +335,50 @@ def get_clean_filters() -> dict:
 
 def format_pool_message(pool: dict) -> str:
     try:
-        # Извлекаем данные из пула
         address = pool.get("address", "N/A")
         mint_x = pool.get("mint_x", "?")
         mint_y = pool.get("mint_y", "?")
-        tvl = float(pool.get("liquidity", 0))
-        volume_1h = float(pool.get("volume", {}).get("hour_1", 0))
-        volume_5m = float(pool.get("volume", {}).get("min_30", 0)) * 2
+        tvl = float(pool.get("liquidity", 0)) if pool.get("liquidity") else 0
+        volume_1h = float(pool.get("volume", {}).get("hour_1", 0)) if pool.get("volume", {}).get("hour_1") else 0
+        volume_5m = float(pool.get("volume", {}).get("min_30", 0)) * 2 if pool.get("volume", {}).get("min_30") else 0
         fee_tvl_ratio = (float(pool.get("fees_24h", 0)) / tvl * 100) if tvl > 0 else 0
-        dynamic_fee = float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0))
+        dynamic_fee = float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)) if pool.get("fee_tvl_ratio", {}).get("hour_1") else 0
         bin_step = pool.get("bin_step", "N/A")
         base_fee = pool.get("base_fee_percentage", "N/A")
 
-        # Определяем токен, который не Solana
-        non_sol_token = get_non_sol_token(mint_x, mint_y)
+        # Определяем пару токенов
+        sol_mint = "So11111111111111111111111111111111111111112"
+        usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-        # Формируем сокращённое название токенов (например, "doug-SOL")
-        token_pair = f"{non_sol_token[:4]}-{'SOL' if 'So11111111111111111111111111111111111111112' in [mint_x, mint_y] else 'OTHER'}"
+        if mint_x == sol_mint:
+            token_a = "SOL"
+            token_b = mint_y[:4]  # Используем первые 4 символа адреса, если символ неизвестен
+        elif mint_y == sol_mint:
+            token_a = mint_x[:4]
+            token_b = "SOL"
+        else:
+            token_a = mint_x[:4]
+            token_b = mint_y[:4]
+
+        token_pair = f"{token_a}-{token_b}"
 
         # Формируем сообщение
         message = (
             "🔥 *Обнаружены пулы с высокой доходностью* 🔥\n\n"
             f"🔥 *{token_pair}* ([🕒 ~5h](https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m)) | "
-            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{non_sol_token})\n"
+            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{mint_x if mint_x != sol_mint else mint_y})\n"
             f"🔗 [Meteora](https://app.meteora.ag/dlmm/{address}) | "
-            f"[DexScreener](https://dexscreener.com/solana/{non_sol_token}) | "
-            f"[GMGN](https://gmgn.ai/sol/token/{non_sol_token}) | "
-            f"[TrenchRadar](https://trench.bot/bundles/{non_sol_token}?all=true)\n"
-            f"💎 *Market Cap*: ${tvl / 1000:,.1f}K 🔹*TVL*: ${tvl:,.1f}K\n"
-            f"📊 *Объем*: ${volume_1h:,.1f}K 🔸 *Bin Step*: {bin_step} 💵 *Fees*: {base_fee}% | {dynamic_fee:.2f}%\n"
+            f"[DexScreener](https://dexscreener.com/solana/{mint_x if mint_x != sol_mint else mint_y}) | "
+            f"[GMGN](https://gmgn.ai/sol/token/{mint_x if mint_x != sol_mint else mint_y}) | "
+            f"[TrenchRadar](https://trench.bot/bundles/{mint_x if mint_x != sol_mint else mint_y}?all=true)\n"
+            f"💎 *Market Cap*: ${tvl / 1000:,.2f}K 🔹*TVL*: ${tvl:,.2f}K\n"
+            f"📊 *Объем*: ${volume_1h:,.2f}K 🔸 *Bin Step*: {bin_step} 💵 *Fees*: {base_fee}% | {dynamic_fee:.2f}%\n"
             f"🤑 *Принт (5m dynamic fee/TVL)*: {fee_tvl_ratio:.2f}%\n"
-            f"🪙 *Токен*: [{non_sol_token}](https://t.me/meteora_pool_tracker_bot/?start=pools={non_sol_token})"
+            f"🪙 *Токен*: [{mint_x if mint_x != sol_mint else mint_y}](https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x if mint_x != sol_mint else mint_y})"
         )
         return message
     except Exception as e:
-        logger.error(f"Ошибка форматирования: {str(e)}")
+        logger.error(f"Ошибка форматирования пула {pool.get('address')}: {str(e)}")
         return "⚠️ Ошибка при формировании информации о пуле"
 
 async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
