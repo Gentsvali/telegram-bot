@@ -241,32 +241,30 @@ def filter_pool(pool: dict) -> bool:
 
 def format_pool_message(pool: dict) -> str:
     try:
+        # Извлекаем данные из пула
+        address = pool.get("address", "N/A")
+        mint_x = pool.get("mint_x", "?")
+        mint_y = pool.get("mint_y", "?")
         tvl = float(pool.get("liquidity", 0))
-        metrics = {
-            "address": pool.get("address", "N/A"),
-            "pair": f"{pool.get('mint_x', '?')}-{pool.get('mint_y', '?')}",
-            "tvl": tvl,
-            "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
-            "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
-            "fee_tvl_ratio": (float(pool.get("fees_24h", 0)) / tvl * 100) if tvl > 0 else 0,
-            "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)),
-            "bin_step": pool.get("bin_step", "N/A"),
-            "base_fee": pool.get("base_fee_percentage", "N/A")
-        }
+        volume_1h = float(pool.get("volume", {}).get("hour_1", 0))
+        volume_5m = float(pool.get("volume", {}).get("min_30", 0)) * 2
+        fee_tvl_ratio = (float(pool.get("fees_24h", 0)) / tvl * 100) if tvl > 0 else 0
+        dynamic_fee = float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0))
+        bin_step = pool.get("bin_step", "N/A")
+        base_fee = pool.get("base_fee_percentage", "N/A")
 
-        return (
-            f"🔥 Новый пул по вашим критериям!\n\n"
-            f"Пара: {metrics['pair']}\n"
-            f"TVL: ${metrics['tvl']:,.2f}\n"
-            f"Объем (1ч): ${metrics['volume_1h']:,.2f}\n"
-            f"Объем (5м): ${metrics['volume_5m']:,.2f}\n"
-            f"Комиссия/TVL: {metrics['fee_tvl_ratio']:.2f}%\n"
-            f"Динамическая комиссия: {metrics['dynamic_fee']:.2f}%\n"
-            f"Bin Step: {metrics['bin_step']}\n"
-            f"Базовая комиссия: {metrics['base_fee']}%\n\n"
-            f"🔗 [Meteora](https://app.meteora.ag/dlmm/{metrics['address']}) | "
-            f"[DexScreener](https://dexscreener.com/solana/{metrics['address']})"
+        # Формируем сообщение
+        message = (
+            "🔥 Обнаружены пулы с высокой доходностью 🔥\n\n"
+            f"🔥 {mint_x}-{mint_y} (https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m) | создан ~5h назад | RugCheck: 🟢1 (https://rugcheck.xyz/tokens/{mint_x})\n"
+            f"🔗 [Meteora](https://app.meteora.ag/dlmm/{address}) | [DexScreener](https://dexscreener.com/solana/{address}) | [GMGN](https://gmgn.ai/sol/token/{mint_x}) | [TrenchRadar](https://trench.bot/bundles/{mint_x}?all=true)\n"
+            f"💎 Market Cap: ${tvl / 1000:,.1f}K 🔹TVL: ${tvl:,.1f}K\n"
+            f"📊 Объем: ${volume_1h:,.1f}K 🔸 Bin Step: {bin_step} 💵 Fees: {base_fee}% | {dynamic_fee:.2f}%\n"
+            f"🤑 Принт (5m dynamic fee/TVL): {fee_tvl_ratio:.2f}%\n"
+            f"🪙 [Токен](https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x}): {mint_x}\n"
+            f"🤐 [Mute 1h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_1h) | [Mute 24h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_24h) | [Mute forever](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_forever)"
         )
+        return message
     except Exception as e:
         logger.error(f"Ошибка форматирования: {str(e)}")
         return "⚠️ Ошибка при формировании информации о пуле"
@@ -384,9 +382,10 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
             logger.info("Фильтры успешно загружены из закрепленного сообщения ✅")
             
             # Обновляем сообщение для актуального формата
-            await save_filters(None, context)
+            logger.info(f"Загруженные фильтры: {current_filters}")
         else:
-            logger.info("Закрепленное сообщение не содержит настроек.")
+            logger.error(f"Ошибка при загрузке фильтров: {e}")
+            current_filters = DEFAULT_FILTERS.copy()
 
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}")
