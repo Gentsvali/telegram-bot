@@ -255,14 +255,20 @@ def format_pool_message(pool: dict) -> str:
 
         # Формируем сообщение
         message = (
-            "🔥 Обнаружены пулы с высокой доходностью 🔥\n\n"
-            f"🔥 {mint_x}-{mint_y} (https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m) | создан ~5h назад | RugCheck: 🟢1 (https://rugcheck.xyz/tokens/{mint_x})\n"
-            f"🔗 [Meteora](https://app.meteora.ag/dlmm/{address}) | [DexScreener](https://dexscreener.com/solana/{address}) | [GMGN](https://gmgn.ai/sol/token/{mint_x}) | [TrenchRadar](https://trench.bot/bundles/{mint_x}?all=true)\n"
-            f"💎 Market Cap: ${tvl / 1000:,.1f}K 🔹TVL: ${tvl:,.1f}K\n"
-            f"📊 Объем: ${volume_1h:,.1f}K 🔸 Bin Step: {bin_step} 💵 Fees: {base_fee}% | {dynamic_fee:.2f}%\n"
-            f"🤑 Принт (5m dynamic fee/TVL): {fee_tvl_ratio:.2f}%\n"
-            f"🪙 [Токен](https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x}): {mint_x}\n"
-            f"🤐 [Mute 1h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_1h) | [Mute 24h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_24h) | [Mute forever](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_forever)"
+            "🔥 *Обнаружены пулы с высокой доходностью* 🔥\n\n"
+            f"🔥 *{mint_x}-{mint_y}* ([🕒 ~5h](https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m)) | "
+            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{mint_x})\n"
+            f"🔗 [Meteora](https://app.meteora.ag/dlmm/{address}) | "
+            f"[DexScreener](https://dexscreener.com/solana/{address}) | "
+            f"[GMGN](https://gmgn.ai/sol/token/{mint_x}) | "
+            f"[TrenchRadar](https://trench.bot/bundles/{mint_x}?all=true)\n"
+            f"💎 *Market Cap*: ${tvl / 1000:,.1f}K 🔹*TVL*: ${tvl:,.1f}K\n"
+            f"📊 *Объем*: ${volume_1h:,.1f}K 🔸 *Bin Step*: {bin_step} 💵 *Fees*: {base_fee}% | {dynamic_fee:.2f}%\n"
+            f"🤑 *Принт (5m dynamic fee/TVL)*: {fee_tvl_ratio:.2f}%\n"
+            f"🪙 *Токен*: [{mint_x}](https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x})\n"
+            f"🤐 *Mute*: [1h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_1h) | "
+            f"[24h](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_24h) | "
+            f"[forever](https://t.me/meteora_pool_tracker_bot/?start=mute_token={mint_x}_forever)"
         )
         return message
     except Exception as e:
@@ -354,8 +360,9 @@ async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = await context.bot.send_message(
             chat_id=USER_ID,
             text=f"⚙️ Текущие настройки фильтров (автосохранение):\n```json\n{filters_json}\n```",
-            parse_mode="Markdown"
-        )
+            parse_mode="Markdown",
+    disable_web_page_preview=True
+)
         await context.bot.pin_chat_message(chat_id=USER_ID, message_id=message.message_id)
         logger.info("Фильтры сохранены в закрепленное сообщение ✅")
 
