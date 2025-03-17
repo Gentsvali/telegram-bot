@@ -9,6 +9,8 @@ import httpx
 import pytz
 from json import JSONDecodeError
 import json
+import requests
+import base64
 
 # Настройка логгера
 logging.basicConfig(
@@ -22,10 +24,12 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 # Загрузка переменных окружения
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO_OWNER = "Gentsvali"
+REPO_NAME = "telegram-bot"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))
-FILTERS_FILE = "filters.json"
+PORT = int(os.environ.get("PORT", 10000))                                          FILE_PATH = "filters.json"
 
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
@@ -203,6 +207,43 @@ async def fetch_pools():
     except Exception as e:
         logger.error(f"API Error: {str(e)}")
         return []
+
+def load_filters_from_github():
+    """Загружает фильтры из GitHub."""
+    global current_filters
+    try:
+        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+
+        content = response.json()["content"]
+        decoded_content = base64.b64decode(content).decode("utf-8")
+        loaded_filters = json.loads(decoded_content)
+        current_filters.update(loaded_filters)
+        logger.info("Фильтры успешно загружены из GitHub ✅")
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фильтров из GitHub: {e}")
+
+def save_filters_to_github():
+    """Сохраняет фильтры в GitHub."""
+    try:
+        clean_filters = get_clean_filters()
+        content = json.dumps(clean_filters, indent=4)
+        encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+
+        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
+        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+        data = {
+            "message": "Обновление фильтров",
+            "content": encoded_content,
+            "sha": requests.get(url, headers=headers).json().get("sha", "")
+        }
+        response = requests.put(url, headers=headers, json=data)
+        response.raise_for_status()
+        logger.info("Фильтры успешно сохранены в GitHub ✅")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении фильтров в GitHub: {e}")
 
 def filter_pool(pool: dict) -> bool:
     if current_filters.get("disable_filters", False):
@@ -405,73 +446,22 @@ async def home():
 
 # Функции для работы с закрепленными сообщениями
 async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет фильтры в закрепленное сообщение и в файл."""
+    """Сохраняет фильтры в GitHub."""
     try:
-        # Удаляем предыдущие закрепленные сообщения
-        chat = await context.bot.get_chat(chat_id=USER_ID)
-        if chat.pinned_message:
-            await context.bot.unpin_chat_message(chat_id=USER_ID, message_id=chat.pinned_message.message_id)
-
-        # Очищаем фильтры от лишних полей
-        clean_filters = get_clean_filters()
-        
-        # Преобразуем фильтры в JSON
-        filters_json = json.dumps(clean_filters, indent=4)
-        
-        # Отправляем и закрепляем новое сообщение
-        message = await context.bot.send_message(
-            chat_id=USER_ID,
-            text=f"```json\n{filters_json}\n```",
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
-        await context.bot.pin_chat_message(chat_id=USER_ID, message_id=message.message_id)
-        logger.info("Фильтры сохранены в закрепленное сообщение ✅")
-
-        # Сохраняем фильтры в файл
-        save_filters_to_file()
+        save_filters_to_github()
+        logger.info("Фильтры сохранены в GitHub ✅")
     except Exception as e:
         logger.error(f"Ошибка при сохранении фильтров: {e}")
         await update.message.reply_text("❌ Не удалось сохранить настройки!")
 
 async def load_filters(context: ContextTypes.DEFAULT_TYPE):
-    """Загружает фильтры из закрепленного сообщения или файла."""
+    """Загружает фильтры из GitHub."""
     global current_filters
     try:
-        # Пытаемся загрузить из закрепленного сообщения
-        chat = await context.bot.get_chat(chat_id=USER_ID)
-        if not chat.pinned_message:
-            logger.info("Закрепленных сообщений не найдено. Пробую загрузить из файла.")
-            load_filters_from_file()
-            return
-
-        message = chat.pinned_message
-        logger.info(f"Закрепленное сообщение: {message.text}")  # Логируем содержимое сообщения
-
-        if "```json" in message.text:
-            # Извлекаем JSON из сообщения
-            json_text = message.text.split("```json\n")[1].split("\n```")[0]
-            logger.info(f"Извлечённый JSON: {json_text}")  # Логируем извлечённый JSON
-
-            loaded_filters = json.loads(json_text)
-            current_filters.update(get_clean_filters())  # Очищаем загруженные фильтры
-            logger.info("Фильтры успешно загружены из закрепленного сообщения ✅")
-            logger.info(f"Загруженные фильтры: {current_filters}")
-            
-            # Сохраняем фильтры в файл
-            save_filters_to_file()
-        else:
-            logger.info("Закрепленное сообщение не содержит JSON. Пробую загрузить из файла.")
-            load_filters_from_file()
-    except IndexError:
-        logger.error("Ошибка: Закрепленное сообщение не содержит JSON. Пробую загрузить из файла.")
-        load_filters_from_file()
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка декодирования JSON: {e}")
-        load_filters_from_file()
+        load_filters_from_github()
+        logger.info("Фильтры успешно загружены из GitHub ✅")
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}")
-        load_filters_from_file()  # Используем файл как резервный вариант
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=PORT)
