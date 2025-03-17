@@ -363,9 +363,9 @@ async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Отправляем и закрепляем новое сообщение
         message = await context.bot.send_message(
             chat_id=USER_ID,
-            text=f"⚙️ Текущие настройки фильтров (автосохранение):\n```json\n{filters_json}\n```",
+            text=f"```json\n{filters_json}\n```",
             parse_mode="Markdown",
-    disable_web_page_preview=True
+            disable_web_page_preview=True
 )
         await context.bot.pin_chat_message(chat_id=USER_ID, message_id=message.message_id)
         logger.info("Фильтры сохранены в закрепленное сообщение ✅")
@@ -385,7 +385,7 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
             return
 
         message = chat.pinned_message
-        if "настройки фильтров" in message.text:
+        if "```json" in message.text:
             # Извлекаем JSON из сообщения
             json_text = message.text.split("```json\n")[1].split("\n```")[0]
             loaded_filters = json.loads(json_text)
@@ -395,9 +395,9 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
             # Обновляем сообщение для актуального формата
             logger.info(f"Загруженные фильтры: {current_filters}")
         else:
-            logger.error(f"Ошибка при загрузке фильтров: {e}")
-            current_filters = DEFAULT_FILTERS.copy()
-
+            logger.info("Закрепленное сообщение не содержит JSON в ожидаемом формате.")
+    except IndexError:
+        logger.error("Ошибка: Закрепленное сообщение не содержит JSON в ожидаемом формате.")
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}")
         current_filters = DEFAULT_FILTERS.copy() 
