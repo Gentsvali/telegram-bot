@@ -9,8 +9,6 @@ import httpx
 import pytz
 from json import JSONDecodeError
 import json
-import psycopg2
-from psycopg2.extras import Json
 
 # Настройка логгера
 logging.basicConfig(
@@ -27,7 +25,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-DATABASE_URL = os.getenv("DATABASE_URL")  # Новая переменная!
 
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
@@ -46,58 +43,6 @@ DEFAULT_FILTERS = {
 }
 current_filters = DEFAULT_FILTERS.copy()
 last_checked_pools = set()
-
-# Функции для работы с базой данных (ЗАМЕНИТЕ СТАРЫЕ ФУНКЦИИ НА ЭТИ)
-# ---------------------------------------------------------------
-def save_filters():
-    """Сохраняет фильтры в базу данных."""
-    try:
-        connection = psycopg2.connect(DATABASE_URL)
-        cursor = connection.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS filters (
-                id SERIAL PRIMARY KEY,
-                filters JSONB NOT NULL
-            );
-        """)
-        cursor.execute("INSERT INTO filters (filters) VALUES (%s)", (Json(current_filters),))
-        connection.commit()
-        logger.info("Фильтры сохранены в базу данных ✅")
-    except Exception as e:
-        logger.error(f"Ошибка сохранения: {e}")
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
-
-def load_filters():
-    """Загружает фильтры из базы данных."""
-    global current_filters
-    try:
-        connection = psycopg2.connect(DATABASE_URL)
-        cursor = connection.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS filters (
-                id SERIAL PRIMARY KEY,
-                filters JSONB NOT NULL
-            );
-        """)
-        cursor.execute("SELECT filters FROM filters ORDER BY id DESC LIMIT 1")
-        result = cursor.fetchone()
-        
-        if result:
-            current_filters = {**DEFAULT_FILTERS, **result[0]}
-            logger.info("Фильтры загружены из базы данных ✅")
-        else:
-            logger.info("Фильтров нет. Использую настройки по умолчанию.")
-            current_filters = DEFAULT_FILTERS.copy()
-    except Exception as e:
-        logger.error(f"Ошибка загрузки: {e}")
-        current_filters = DEFAULT_FILTERS.copy()
-    finally:
-        if connection:
-            cursor.close()
-            connection.close() 
 
 # Инициализация приложения Telegram
 application = (
@@ -121,6 +66,7 @@ async def startup():
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+    await load_filters(application)  # Загружаем фильтры при старте
     logger.info("Приложение и вебхук успешно инициализированы")
 
 @app.after_serving
@@ -186,7 +132,7 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             raise ValueError(f"Неизвестный параметр: {param}")
 
-        save_filters()  # Сохраняем настройки
+        await save_filters(update, context)  # Сохраняем фильтры в закрепленное сообщение
         await update.message.reply_text(f"✅ {param} обновлен: {value}")
     
     except Exception as e:
@@ -209,7 +155,7 @@ async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_
             else:
                 logger.warning(f"Неизвестный параметр фильтра: {key}")
 
-        save_filters()  # Сохраняем настройки
+        await save_filters(update, context)  # Сохраняем фильтры в закрепленное сообщение
         await update.message.reply_text("✅ Фильтры успешно обновлены!")
         await show_filters(update, context)
 
@@ -393,6 +339,58 @@ async def webhook():
 @app.route('/healthcheck')
 def healthcheck():
     return {"status": "OK"}, 200
+
+# Функции для работы с закрепленными сообщениями
+async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет фильтры в закрепленное сообщение."""
+    try:
+        # Удаляем предыдущие закрепленные сообщения
+        chat = await context.bot.get_chat(chat_id=USER_ID)
+        if chat.pinned_message:
+            await context.bot.unpin_chat_message(chat_id=USER_ID, message_id=chat.pinned_message.message_id)
+
+        # Преобразуем фильтры в JSON
+        filters_json = json.dumps(current_filters, indent=4)
+        
+        # Отправляем и закрепляем новое сообщение
+        message = await context.bot.send_message(
+            chat_id=USER_ID,
+            text=f"⚙️ Текущие настройки фильтров (автосохранение):\n```json\n{filters_json}\n```",
+            parse_mode="Markdown"
+        )
+        await context.bot.pin_chat_message(chat_id=USER_ID, message_id=message.message_id)
+        logger.info("Фильтры сохранены в закрепленное сообщение ✅")
+
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении фильтров: {e}")
+        await update.message.reply_text("❌ Не удалось сохранить настройки!")
+
+async def load_filters(context: ContextTypes.DEFAULT_TYPE):
+    """Загружает фильтры из закрепленного сообщения."""
+    global current_filters
+    try:
+        # Получаем закрепленное сообщение
+        chat = await context.bot.get_chat(chat_id=USER_ID)
+        if not chat.pinned_message:
+            logger.info("Закрепленных сообщений не найдено. Использую настройки по умолчанию.")
+            return
+
+        message = chat.pinned_message
+        if "настройки фильтров" in message.text:
+            # Извлекаем JSON из сообщения
+            json_text = message.text.split("```json\n")[1].split("\n```")[0]
+            loaded_filters = json.loads(json_text)
+            current_filters.update(loaded_filters)
+            logger.info("Фильтры успешно загружены из закрепленного сообщения ✅")
+            
+            # Обновляем сообщение для актуального формата
+            await save_filters(None, context)
+        else:
+            logger.info("Закрепленное сообщение не содержит настроек.")
+
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фильтров: {e}")
+        current_filters = DEFAULT_FILTERS.copy() 
 
 if __name__ == "__main__":
     load_filters()  # Загружаем настройки
