@@ -352,29 +352,32 @@ def format_pool_message(pool: dict) -> str:
 
         if mint_x == sol_mint:
             token_a = "SOL"
-            token_b = mint_y[:4]  # Используем первые 4 символа адреса, если символ неизвестен
+            token_b = mint_y  # Токен, который идет в паре с SOL
         elif mint_y == sol_mint:
-            token_a = mint_x[:4]
+            token_a = mint_x  # Токен, который идет в паре с SOL
             token_b = "SOL"
         else:
-            token_a = mint_x[:4]
-            token_b = mint_y[:4]
+            token_a = mint_x  # Если оба токена не SOL, выбираем первый
+            token_b = mint_y
 
-        token_pair = f"{token_a}-{token_b}"
+        token_pair = f"{token_a[:4]}-{token_b[:4]}"  # Сокращаем названия до 4 символов
+
+        # Определяем токен для отображения после "🪙 Токен:"
+        display_token = token_b if token_a == "SOL" else token_a
 
         # Формируем сообщение
         message = (
             "🔥 *Обнаружены пулы с высокой доходностью* 🔥\n\n"
             f"🔥 *{token_pair}* ([🕒 ~5h](https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m)) | "
-            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{mint_x if mint_x != sol_mint else mint_y})\n"
+            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{display_token})\n"
             f"🔗 [Meteora](https://app.meteora.ag/dlmm/{address}) | "
-            f"[DexScreener](https://dexscreener.com/solana/{mint_x if mint_x != sol_mint else mint_y}) | "
-            f"[GMGN](https://gmgn.ai/sol/token/{mint_x if mint_x != sol_mint else mint_y}) | "
-            f"[TrenchRadar](https://trench.bot/bundles/{mint_x if mint_x != sol_mint else mint_y}?all=true)\n"
+            f"[DexScreener](https://dexscreener.com/solana/{display_token}) | "
+            f"[GMGN](https://gmgn.ai/sol/token/{display_token}) | "
+            f"[TrenchRadar](https://trench.bot/bundles/{display_token}?all=true)\n"
             f"💎 *Market Cap*: ${tvl / 1000:,.2f}K 🔹*TVL*: ${tvl:,.2f}K\n"
             f"📊 *Объем*: ${volume_1h:,.2f}K 🔸 *Bin Step*: {bin_step} 💵 *Fees*: {base_fee}% | {dynamic_fee:.2f}%\n"
             f"🤑 *Принт (5m dynamic fee/TVL)*: {fee_tvl_ratio:.2f}%\n"
-            f"🪙 *Токен*: [{mint_x if mint_x != sol_mint else mint_y}](https://t.me/meteora_pool_tracker_bot/?start=pools={mint_x if mint_x != sol_mint else mint_y})"
+            f"🪙 *Токен*: [{display_token}](https://t.me/meteora_pool_tracker_bot/?start=pools={display_token})"
         )
         return message
     except Exception as e:
