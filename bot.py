@@ -25,6 +25,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
+FILTERS_FILE = "filters.json"
 
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
@@ -251,6 +252,29 @@ def get_non_sol_token(mint_x: str, mint_y: str) -> str:
     else:
         return mint_x  # Если оба токена не Solana, возвращаем первый
 
+def save_filters_to_file():
+    """Сохраняет текущие фильтры в файл."""
+    try:
+        with open(FILTERS_FILE, "w") as file:
+            json.dump(current_filters, file, indent=4)
+        logger.info("Фильтры сохранены в файл ✅")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении фильтров в файл: {e}")
+
+def load_filters_from_file():
+    """Загружает фильтры из файла."""
+    global current_filters
+    try:
+        if os.path.exists(FILTERS_FILE):
+            with open(FILTERS_FILE, "r") as file:
+                loaded_filters = json.load(file)
+                current_filters.update(loaded_filters)
+                logger.info("Фильтры загружены из файла ✅")
+        else:
+            logger.info("Файл с фильтрами не найден. Использую настройки по умолчанию.")
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фильтров из файла: {e}")
+
 def format_pool_message(pool: dict) -> str:
     try:
         # Извлекаем данные из пула
@@ -365,7 +389,7 @@ async def home():
 
 # Функции для работы с закрепленными сообщениями
 async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет фильтры в закрепленное сообщение."""
+    """Сохраняет фильтры в закрепленное сообщение и в файл."""
     try:
         # Удаляем предыдущие закрепленные сообщения
         chat = await context.bot.get_chat(chat_id=USER_ID)
@@ -381,22 +405,25 @@ async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"```json\n{filters_json}\n```",
             parse_mode="Markdown",
             disable_web_page_preview=True
-)
+        )
         await context.bot.pin_chat_message(chat_id=USER_ID, message_id=message.message_id)
         logger.info("Фильтры сохранены в закрепленное сообщение ✅")
 
+        # Сохраняем фильтры в файл
+        save_filters_to_file()
     except Exception as e:
         logger.error(f"Ошибка при сохранении фильтров: {e}")
         await update.message.reply_text("❌ Не удалось сохранить настройки!")
 
 async def load_filters(context: ContextTypes.DEFAULT_TYPE):
-    """Загружает фильтры из закрепленного сообщения."""
+    """Загружает фильтры из закрепленного сообщения или файла."""
     global current_filters
     try:
-        # Получаем закрепленное сообщение
+        # Пытаемся загрузить из закрепленного сообщения
         chat = await context.bot.get_chat(chat_id=USER_ID)
         if not chat.pinned_message:
-            logger.info("Закрепленных сообщений не найдено. Использую настройки по умолчанию.")
+            logger.info("Закрепленных сообщений не найдено. Пробую загрузить из файла.")
+            load_filters_from_file()
             return
 
         message = chat.pinned_message
@@ -407,15 +434,17 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
             current_filters.update(loaded_filters)
             logger.info("Фильтры успешно загружены из закрепленного сообщения ✅")
             
-            # Обновляем сообщение для актуального формата
-            logger.info(f"Загруженные фильтры: {current_filters}")
+            # Сохраняем фильтры в файл
+            save_filters_to_file()
         else:
-            logger.info("Закрепленное сообщение не содержит JSON в ожидаемом формате.")
+            logger.info("Закрепленное сообщение не содержит JSON. Пробую загрузить из файла.")
+            load_filters_from_file()
     except IndexError:
-        logger.error("Ошибка: Закрепленное сообщение не содержит JSON в ожидаемом формате.")
+        logger.error("Ошибка: Закрепленное сообщение не содержит JSON. Пробую загрузить из файла.")
+        load_filters_from_file()
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}")
-        current_filters = DEFAULT_FILTERS.copy() 
+        load_filters_from_file()  # Используем файл как резервный вариант 
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=PORT)
