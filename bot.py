@@ -275,6 +275,22 @@ def load_filters_from_file():
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров из файла: {e}")
 
+def get_clean_filters() -> dict:
+    """Возвращает только те поля, которые относятся к настройкам фильтров."""
+    return {
+        "disable_filters": current_filters.get("disable_filters", False),
+        "stable_coin": current_filters.get("stable_coin", "USDC"),
+        "bin_steps": current_filters.get("bin_steps", [20, 80, 100, 125, 250]),
+        "min_tvl": current_filters.get("min_tvl", 10000.0),
+        "min_fdv": current_filters.get("min_fdv", 500000.0),
+        "base_fee_max": current_filters.get("base_fee_max", 1.0),
+        "fee_tvl_ratio_24h_min": current_filters.get("fee_tvl_ratio_24h_min", 0.1),
+        "volume_1h_min": current_filters.get("volume_1h_min", 5000.0),
+        "volume_5m_min": current_filters.get("volume_5m_min", 1000.0),
+        "dynamic_fee_tvl_ratio_min": current_filters.get("dynamic_fee_tvl_ratio_min", 0.5),
+        "verified_only": current_filters.get("verified_only", True)
+    }
+
 def format_pool_message(pool: dict) -> str:
     try:
         # Извлекаем данные из пула
@@ -396,8 +412,11 @@ async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat.pinned_message:
             await context.bot.unpin_chat_message(chat_id=USER_ID, message_id=chat.pinned_message.message_id)
 
+        # Очищаем фильтры от лишних полей
+        clean_filters = get_clean_filters()
+        
         # Преобразуем фильтры в JSON
-        filters_json = json.dumps(current_filters, indent=4)
+        filters_json = json.dumps(clean_filters, indent=4)
         
         # Отправляем и закрепляем новое сообщение
         message = await context.bot.send_message(
@@ -427,12 +446,17 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
             return
 
         message = chat.pinned_message
+        logger.info(f"Закрепленное сообщение: {message.text}")  # Логируем содержимое сообщения
+
         if "```json" in message.text:
             # Извлекаем JSON из сообщения
             json_text = message.text.split("```json\n")[1].split("\n```")[0]
+            logger.info(f"Извлечённый JSON: {json_text}")  # Логируем извлечённый JSON
+
             loaded_filters = json.loads(json_text)
-            current_filters.update(loaded_filters)
+            current_filters.update(get_clean_filters())  # Очищаем загруженные фильтры
             logger.info("Фильтры успешно загружены из закрепленного сообщения ✅")
+            logger.info(f"Загруженные фильтры: {current_filters}")
             
             # Сохраняем фильтры в файл
             save_filters_to_file()
@@ -442,9 +466,12 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
     except IndexError:
         logger.error("Ошибка: Закрепленное сообщение не содержит JSON. Пробую загрузить из файла.")
         load_filters_from_file()
+    except json.JSONDecodeError as e:
+        logger.error(f"Ошибка декодирования JSON: {e}")
+        load_filters_from_file()
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}")
-        load_filters_from_file()  # Используем файл как резервный вариант 
+        load_filters_from_file()  # Используем файл как резервный вариант
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=PORT)
