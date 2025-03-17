@@ -344,6 +344,10 @@ async def webhook():
 def healthcheck():
     return {"status": "OK"}, 200
 
+@app.route('/')
+async def home():
+    return {"status": "OK"}, 200
+
 # Функции для работы с закрепленными сообщениями
 async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет фильтры в закрепленное сообщение."""
