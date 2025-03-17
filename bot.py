@@ -66,7 +66,9 @@ async def startup():
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-    await load_filters(application)  # Загружаем фильтры при старте
+    
+    # Загружаем фильтры при старте
+    await load_filters(application)
     logger.info("Приложение и вебхук успешно инициализированы")
 
 @app.after_serving
@@ -403,5 +405,4 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
         current_filters = DEFAULT_FILTERS.copy() 
 
 if __name__ == "__main__":
-    load_filters()  # Загружаем настройки
     app.run(host='0.0.0.0', port=PORT)
