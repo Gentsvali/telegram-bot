@@ -150,8 +150,8 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # WebSocket для отслеживания пулов
 async def track_pools():
-    ws_url = "wss://api.mainnet-beta.solana.com"  # WebSocket URL Solana
-    program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")  # Замените на реальный ID программы DLMM
+    ws_url = "wss://api.mainnet-beta.solana.com"
+    program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 
     while True:
         try:
@@ -161,6 +161,8 @@ async def track_pools():
 
                 async for response in websocket:
                     try:
+                        # Логируем весь ответ
+                        logger.info(f"Ответ WebSocket: {response}")
                         pool_data = response["result"]["value"]
                         await handle_pool_change(pool_data)
                     except KeyError:
@@ -172,21 +174,25 @@ async def track_pools():
             await asyncio.sleep(5)
 
 # Обработка изменений в пулах
-async def handle_pool_change(pool_data: dict):
+async def handle_pool_change(pool_data):
     print("Полученные данные о пуле:", pool_data)  # Отладочная информация
     try:
-        # Проверяем, что pool_data — это словарь
-        if isinstance(pool_data, dict):
-            if filter_pool(pool_data):  # Используйте вашу существующую функцию фильтрации
-                message = format_pool_message(pool_data)  # Форматируйте сообщение
-                await application.bot.send_message(
-                    chat_id=USER_ID,
-                    text=message,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
+        # Если pool_data — это список
+        if isinstance(pool_data, list):
+            for pool in pool_data:  # Итерируемся по каждому пулу
+                if isinstance(pool, dict):  # Проверяем, что каждый элемент — словарь
+                    if filter_pool(pool):  # Фильтруем пул
+                        message = format_pool_message(pool)  # Форматируем сообщение
+                        await application.bot.send_message(
+                            chat_id=USER_ID,
+                            text=message,
+                            parse_mode="Markdown",
+                            disable_web_page_preview=True
+                        )
+                else:
+                    logger.error("Элемент пула не является словарем")
         else:
-            logger.error("Ожидался словарь, получен другой тип данных")
+            logger.error("Ожидался список, получен другой тип данных")
     except Exception as e:
         logger.error(f"Ошибка обработки данных: {e}")
 
