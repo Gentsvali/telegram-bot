@@ -13,7 +13,7 @@ import pytz
 from json import JSONDecodeError
 import requests
 from solana.rpc.websocket_api import connect
-from solana.publickey import PublicKey
+from solders.pubkey import Pubkey
 
 # Настройка логгера
 logging.basicConfig(
