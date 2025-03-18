@@ -173,14 +173,22 @@ async def track_pools():
 
 # Обработка изменений в пулах
 async def handle_pool_change(pool_data: dict):
-    if filter_pool(pool_data):  # Используйте вашу существующую функцию фильтрации
-        message = format_pool_message(pool_data)  # Форматируйте сообщение
-        await application.bot.send_message(
-            chat_id=USER_ID,
-            text=message,
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
+    print("Полученные данные о пуле:", pool_data)  # Отладочная информация
+    try:
+        # Проверяем, что pool_data — это словарь
+        if isinstance(pool_data, dict):
+            if filter_pool(pool_data):  # Используйте вашу существующую функцию фильтрации
+                message = format_pool_message(pool_data)  # Форматируйте сообщение
+                await application.bot.send_message(
+                    chat_id=USER_ID,
+                    text=message,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+        else:
+            logger.error("Ожидался словарь, получен другой тип данных")
+    except Exception as e:
+        logger.error(f"Ошибка обработки данных: {e}")
 
 # Новый обработчик для JSON-сообщений
 async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
