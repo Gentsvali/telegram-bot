@@ -1,9 +1,11 @@
-python-telegram-bot[job-queue,webhooks]==20.3
-httpx==0.24.1
+python-telegram-bot[job-queue,webhooks]==20.5
+httpx==0.26.0
 python-dotenv==1.0.0
 pytz==2023.3
 uvicorn==0.34.0
-APScheduler~=3.10.1
-quart>=0.18.0
+APScheduler==3.10.1
+quart==0.18.0
 requests==2.31.0
-solana
+solana==0.36.6
+websockets>=10.4
+solders>=0.15.0
