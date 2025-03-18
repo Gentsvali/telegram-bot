@@ -151,7 +151,7 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # WebSocket для отслеживания пулов
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"  # WebSocket URL Solana
-    program_id = PublicKey("DLMM_PROGRAM_ID")  # Замените на реальный ID программы DLMM
+    program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")  # Замените на реальный ID программы DLMM
 
     while True:
         try:
