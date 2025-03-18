@@ -177,12 +177,13 @@ async def track_pools():
 async def handle_pool_change(pool_data):
     print("Полученные данные о пуле:", pool_data)  # Отладочная информация
     try:
-        # Если pool_data — это список
+        # Если pool_data — это список идентификаторов
         if isinstance(pool_data, list):
-            for pool in pool_data:  # Итерируемся по каждому пулу
-                if isinstance(pool, dict):  # Проверяем, что каждый элемент — словарь
-                    if filter_pool(pool):  # Фильтруем пул
-                        message = format_pool_message(pool)  # Форматируем сообщение
+            for pool_id in pool_data:  # Итерируемся по каждому ID пула
+                pool_details = await fetch_pool_details(pool_id)  # Получаем подробные данные
+                if pool_details and isinstance(pool_details, dict):  # Проверяем, что данные — словарь
+                    if filter_pool(pool_details):  # Фильтруем пул
+                        message = format_pool_message(pool_details)  # Форматируем сообщение
                         await application.bot.send_message(
                             chat_id=USER_ID,
                             text=message,
@@ -190,7 +191,7 @@ async def handle_pool_change(pool_data):
                             disable_web_page_preview=True
                         )
                 else:
-                    logger.error("Элемент пула не является словарем")
+                    logger.error(f"Не удалось получить данные о пуле {pool_id}")
         else:
             logger.error("Ожидался список, получен другой тип данных")
     except Exception as e:
