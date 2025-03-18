@@ -6,3 +6,4 @@ uvicorn==0.34.0
 APScheduler~=3.10.1
 quart>=0.18.0
 requests==2.31.0
+solana
