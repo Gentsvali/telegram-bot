@@ -1,5 +1,8 @@
 import os
 import logging
+import asyncio
+import json
+import base64
 from datetime import datetime, timedelta
 from quart import Quart, request
 from dotenv import load_dotenv
@@ -8,9 +11,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 import httpx
 import pytz
 from json import JSONDecodeError
-import json
 import requests
-import base64
+from solana.rpc.websocket_api import connect
+from solana.publickey import PublicKey
 
 # Настройка логгера
 logging.basicConfig(
@@ -30,7 +33,7 @@ REPO_NAME = "telegram-bot"
 FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))                                          
+PORT = int(os.environ.get("PORT", 10000))
 
 # Конфигурация API Meteora
 API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
@@ -72,9 +75,8 @@ async def startup():
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-    
-    # Загружаем фильтры при старте
     await load_filters(application)
+    asyncio.create_task(track_pools())  # Запуск WebSocket
     logger.info("Приложение и вебхук успешно инициализированы")
 
 @app.after_serving
@@ -145,6 +147,40 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+# WebSocket для отслеживания пулов
+async def track_pools():
+    ws_url = "wss://api.mainnet-beta.solana.com"  # WebSocket URL Solana
+    program_id = PublicKey("DLMM_PROGRAM_ID")  # Замените на реальный ID программы DLMM
+
+    while True:
+        try:
+            async with connect(ws_url) as websocket:
+                await websocket.program_subscribe(program_id, encoding="jsonParsed")
+                logger.info("WebSocket подключен к Solana")
+
+                async for response in websocket:
+                    try:
+                        pool_data = response["result"]["value"]
+                        await handle_pool_change(pool_data)
+                    except KeyError:
+                        logger.error("Ошибка формата данных WebSocket")
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки данных: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка WebSocket: {e}. Переподключение через 5 секунд...")
+            await asyncio.sleep(5)
+
+# Обработка изменений в пулах
+async def handle_pool_change(pool_data: dict):
+    if filter_pool(pool_data):  # Используйте вашу существующую функцию фильтрации
+        message = format_pool_message(pool_data)  # Форматируйте сообщение
+        await application.bot.send_message(
+            chat_id=USER_ID,
+            text=message,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
 
 # Новый обработчик для JSON-сообщений
 async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
