@@ -167,6 +167,7 @@ async def track_pools():
                         # Проверяем, что response — это словарь
                         if isinstance(response, dict):
                             pool_data = response.get("result", {}).get("value", {})
+                            logger.info(f"Данные пула: {pool_data}")
                             await handle_pool_change(pool_data)
                         else:
                             logger.error("Ожидался словарь, получен другой тип данных")
