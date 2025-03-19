@@ -164,13 +164,17 @@ async def track_pools():
                         # Логируем сырые данные
                         logger.info(f"Сырые данные: {response}")
                         
-                        # Проверяем, что response — это словарь
-                        if isinstance(response, dict):
-                            pool_data = response.get("result", {}).get("value", {})
-                            logger.info(f"Данные пула: {pool_data}")
+                        # Игнорируем SubscriptionResult
+                        if hasattr(response, "result") and isinstance(response.result, int):
+                            logger.info("Подтверждение подписки, игнорируем")
+                            continue
+
+                        # Обрабатываем ProgramNotification
+                        if hasattr(response, "result") and hasattr(response.result, "value"):
+                            pool_data = response.result.value
                             await handle_pool_change(pool_data)
                         else:
-                            logger.error("Ожидался словарь, получен другой тип данных")
+                            logger.error("Неправильный формат данных: ожидался ProgramNotification")
                     except KeyError:
                         logger.error("Ошибка формата данных WebSocket")
                     except Exception as e:
