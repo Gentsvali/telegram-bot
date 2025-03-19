@@ -108,7 +108,6 @@ application = (
     .concurrent_updates(True)  # Разрешение на параллельную обработку обновлений
     .http_version("1.1")  # Версия HTTP для запросов
     .get_updates_http_version("1.1")  # Версия HTTP для получения обновлений
-    .post_shutdown(post_shutdown)  # Функция, вызываемая после завершения работы (опционально)
     .build()
 )
 
