@@ -3,6 +3,7 @@ import logging
 import asyncio
 import json
 import base64
+import signal  # <-- Добавьте этот импорт
 from datetime import datetime, timedelta
 from quart import Quart, request
 from dotenv import load_dotenv
@@ -14,8 +15,9 @@ from json import JSONDecodeError
 import requests
 from solana.rpc.websocket_api import connect
 from solders.pubkey import Pubkey
-from solders.account import Account  
-from solders.rpc.responses import ProgramNotification  
+from solders.account import Account
+from solders.rpc.responses import ProgramNotification
+  
 
 # Настройка логгера
 logging.basicConfig(
