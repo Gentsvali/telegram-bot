@@ -144,6 +144,24 @@ async def send_alert(context: ContextTypes.DEFAULT_TYPE, pool: dict):
     except Exception as e:
         logger.error(f"Ошибка отправки: {str(e)}")
 
+# Добавляем отсутствующую функцию check_pools
+async def check_pools(context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Запуск проверки пулов...")
+    try:
+        pools = await fetch_pools()
+        new_pools = [p for p in pools if p["address"] not in tracked_pools and filter_pool(p)]
+        
+        if new_pools:
+            logger.info(f"Найдено {len(new_pools)} новых пулов")
+            for pool in new_pools:
+                await send_alert(context, pool)
+            tracked_pools.update(p["address"] for p in pools)
+        else:
+            logger.info("Новых пулов не найдено")
+    except Exception as e:
+        logger.error(f"Ошибка проверки: {str(e)}")
+        await context.bot.send_message(USER_ID, "⚠️ Ошибка при проверке пулов")
+
 # WebSocket обработчик
 async def monitor_pools():
     while True:
@@ -176,6 +194,12 @@ async def initialize_telegram_app():
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+    
+    # Регистрируем обработчики команд
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("filters", show_filters))
+    application.add_handler(CommandHandler("check", check_pools))
+    
     logger.info("Telegram приложение инициализировано")
 
 # Системные функции
@@ -192,10 +216,14 @@ async def shutdown():
 
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 async def webhook():
-    data = await request.get_json()
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
-    return '', 200
+    try:
+        data = await request.get_json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return '', 200
+    except Exception as e:
+        logger.error(f"Webhook Error: {str(e)}")
+        return '', 500
 
 @app.route('/')
 async def home():
