@@ -161,10 +161,15 @@ async def track_pools():
 
                 async for response in websocket:
                     try:
-                        # Логируем весь ответ
-                        logger.info(f"Ответ WebSocket: {response}")
-                        pool_data = response["result"]["value"]
-                        await handle_pool_change(pool_data)
+                        # Логируем сырые данные
+                        logger.info(f"Сырые данные: {response}")
+                        
+                        # Проверяем, что response — это словарь
+                        if isinstance(response, dict):
+                            pool_data = response.get("result", {}).get("value", {})
+                            await handle_pool_change(pool_data)
+                        else:
+                            logger.error("Ожидался словарь, получен другой тип данных")
                     except KeyError:
                         logger.error("Ошибка формата данных WebSocket")
                     except Exception as e:
@@ -174,26 +179,31 @@ async def track_pools():
             await asyncio.sleep(5)
 
 # Обработка изменений в пулах
-async def handle_pool_change(pool_data):
-    print("Полученные данные о пуле:", pool_data)  # Отладочная информация
+async def handle_pool_change(raw_data):
     try:
-        # Если pool_data — это список идентификаторов
-        if isinstance(pool_data, list):
-            for pool_id in pool_data:  # Итерируемся по каждому ID пула
-                pool_details = await fetch_pool_details(pool_id)  # Получаем подробные данные
-                if pool_details and isinstance(pool_details, dict):  # Проверяем, что данные — словарь
-                    if filter_pool(pool_details):  # Фильтруем пул
-                        message = format_pool_message(pool_details)  # Форматируем сообщение
-                        await application.bot.send_message(
-                            chat_id=USER_ID,
-                            text=message,
-                            parse_mode="Markdown",
-                            disable_web_page_preview=True
-                        )
-                else:
-                    logger.error(f"Не удалось получить данные о пуле {pool_id}")
+        # Если данные — это строка, декодируем их
+        if isinstance(raw_data, str):
+            pool_data = json.loads(raw_data)
+        # Если данные — это байты, декодируем их в строку, а затем в JSON
+        elif isinstance(raw_data, bytes):
+            pool_data = json.loads(raw_data.decode("utf-8"))
         else:
-            logger.error("Ожидался список, получен другой тип данных")
+            pool_data = raw_data  # Если данные уже в правильном формате
+
+        # Проверяем, что pool_data — это словарь
+        if isinstance(pool_data, dict):
+            if filter_pool(pool_data):
+                message = format_pool_message(pool_data)
+                await application.bot.send_message(
+                    chat_id=USER_ID,
+                    text=message,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+        else:
+            logger.error("Ожидался словарь, получен другой тип данных")
+    except json.JSONDecodeError:
+        logger.error("Ошибка декодирования JSON")
     except Exception as e:
         logger.error(f"Ошибка обработки данных: {e}")
 
