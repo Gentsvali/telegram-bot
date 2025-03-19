@@ -171,12 +171,17 @@ async def process_pool_update(notification: ProgramNotification):
     except Exception as e:
         logger.error(f"Ошибка обработки: {str(e)}")
 
-# Системные функции
-@app.before_serving
-async def startup():
+# Инициализация приложения Telegram
+async def initialize_telegram_app():
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+    logger.info("Telegram приложение инициализировано")
+
+# Системные функции
+@app.before_serving
+async def startup():
+    await initialize_telegram_app()
     application.job_queue.run_repeating(check_pools, interval=300)
     asyncio.create_task(monitor_pools())
 
