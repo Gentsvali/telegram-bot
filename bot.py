@@ -24,7 +24,7 @@ import pytz
 
 # Solana WebSocket
 from solana.rpc.commitment import Commitment, Confirmed, Finalized
-from solana.rpc.websocket_api import connect, MemcmpFilter
+from solana.rpc.websocket_api import connect
 from solders.pubkey import Pubkey
 from solders.account import Account
 from solders.rpc.responses import ProgramNotification
@@ -310,12 +310,19 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-    commitment = Confirmed  # Используем уровень фиксации "confirmed"
+    commitment = Confirmed  # Уровень фиксации
+
+    # Фильтры вручную
+    filters = [
+        {"dataSize": 200},  # Фильтр по размеру данных
+        {"memcmp": {"offset": 0, "bytes": "base64:ABC123"}},  # Фильтр по совпадению байтов
+    ]
 
     while True:
         try:
             async with connect(ws_url) as websocket:
-                await websocket.program_subscribe(program_id, encoding="jsonParsed", commitment=commitment)
+                # Подписываемся на события программы с фильтрами
+                await websocket.program_subscribe(program_id, encoding="jsonParsed", commitment=commitment, filters=filters)
                 logger.info("WebSocket подключен к Solana ✅")
 
                 async for response in websocket:
@@ -328,9 +335,6 @@ async def track_pools():
                             logger.error("Неправильный формат данных: ожидался ProgramNotification")
                     except Exception as e:
                         logger.error(f"Ошибка обработки данных: {e}", exc_info=True)
-        except websockets.exceptions.ConnectionClosedError as e:
-            logger.error(f"Соединение закрыто: {e}. Переподключение через 5 секунд...")
-            await asyncio.sleep(5)
         except Exception as e:
             logger.error(f"Ошибка WebSocket: {e}. Переподключение через 5 секунд...", exc_info=True)
             await asyncio.sleep(5)
