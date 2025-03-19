@@ -7,3 +7,19 @@ Saber: SSwpkEEcbUqx4vtoEByFjSkhKdCT862DNVb52nZg1UZ
 Whirlpool: whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc
 
 "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo": "Meteora DLMM"
+
+
+
+
+
+python-telegram-bot[job-queue,webhooks]==21.0
+httpx~=0.27
+python-dotenv==1.0.0
+pytz==2023.3
+uvicorn==0.34.0
+APScheduler~=3.10.4
+quart>=0.20.0
+requests==2.31.0
+solana==0.36.6
+websockets>=10.4
+solders>=0.15.0
