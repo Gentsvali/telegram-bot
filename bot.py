@@ -14,18 +14,28 @@ from json import JSONDecodeError
 import requests
 from solana.rpc.websocket_api import connect
 from solders.pubkey import Pubkey
+from solders.account import Account  
+from solders.rpc.responses import ProgramNotification  
 
 # Настройка логгера
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log"),  # Логирование в файл
+        logging.StreamHandler()  # Логирование в консоль
+    ]
 )
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 
-# Загрузка переменных окружения
-load_dotenv()
+# Проверка наличия переменных окружения
+required_env_vars = ["TELEGRAM_TOKEN", "GITHUB_TOKEN", "USER_ID", "WEBHOOK_URL"]
+for var in required_env_vars:
+    if not os.getenv(var):
+        raise ValueError(f"Переменная окружения {var} не найдена!")
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_OWNER = "Gentsvali"
@@ -72,17 +82,29 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup():
-    await application.initialize()
-    await application.start()
-    await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-    await load_filters(application)
-    asyncio.create_task(track_pools())  # Запуск WebSocket
-    logger.info("Приложение и вебхук успешно инициализированы")
+    try:
+        await application.initialize()
+        await application.start()
+        await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+        await load_filters(application)
+        asyncio.create_task(track_pools())  # Запуск WebSocket
+        logger.info("Приложение и вебхук успешно инициализированы")
+    except Exception as e:
+        logger.error(f"Ошибка при запуске приложения: {e}")
+        raise
 
 @app.after_serving
 async def shutdown():
     await application.stop()
     await application.shutdown()
+
+# Обработка сигналов для корректного завершения
+def handle_shutdown(signum, frame):
+    logger.info("Получен сигнал завершения. Останавливаю бота...")
+    asyncio.create_task(shutdown())
+
+signal.signal(signal.SIGINT, handle_shutdown)
+signal.signal(signal.SIGTERM, handle_shutdown)
 
 # Основные обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -172,6 +194,7 @@ async def track_pools():
                         # Обрабатываем ProgramNotification
                         if hasattr(response, "result") and hasattr(response.result, "value"):
                             pool_data = response.result.value
+                            logger.info(f"Данные пула: {pool_data}")
                             await handle_pool_change(pool_data)
                         else:
                             logger.error("Неправильный формат данных: ожидался ProgramNotification")
@@ -542,6 +565,14 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Фильтры успешно загружены из GitHub ✅")
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}")
+
+# Обработка сигналов для корректного завершения
+def handle_shutdown(signum, frame):
+    logger.info("Получен сигнал завершения. Останавливаю бота...")
+    asyncio.create_task(shutdown())
+
+signal.signal(signal.SIGINT, handle_shutdown)
+signal.signal(signal.SIGTERM, handle_shutdown)
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=PORT)
