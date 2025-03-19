@@ -174,8 +174,8 @@ async def monitor_pools():
                 async for response in ws:
                     try:
                         # Игнорируем SubscriptionResult
-                        if isinstance(response, list) and len(response) > 0:
-                            if hasattr(response[0], "result") and isinstance(response[0].result, int):
+                        if isinstance(response, list):
+                            if len(response) > 0 and hasattr(response[0], "result") and isinstance(response[0].result, int):
                                 logger.info("Подтверждение подписки, игнорируем")
                                 continue
 
@@ -193,7 +193,15 @@ async def monitor_pools():
 async def process_pool_update(notification: ProgramNotification):
     """Обрабатывает уведомление о пуле."""
     try:
+        if not hasattr(notification, "result") or not hasattr(notification.result, "value"):
+            logger.warning("Неправильный формат уведомления: отсутствует result.value")
+            return
+
         pool_data = notification.result.value
+        if not hasattr(pool_data, "pubkey") or not hasattr(pool_data, "account"):
+            logger.warning("Неправильный формат данных пула: отсутствует pubkey или account")
+            return
+
         pool_info = {
             "address": str(pool_data.pubkey),
             "liquidity": lamports_to_sol(pool_data.account.lamports),
@@ -208,6 +216,7 @@ async def process_pool_update(notification: ProgramNotification):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ошибок."""
     logger.error(f"Ошибка: {context.error}")
+    logger.info(f"Получены данные: {response}")
     await context.bot.send_message(USER_ID, f"⚠️ Произошла ошибка: {context.error}")
 
 # В функции initialize_telegram_app добавьте:
