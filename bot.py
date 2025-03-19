@@ -164,15 +164,24 @@ async def check_pools(context: ContextTypes.DEFAULT_TYPE):
 
 # WebSocket обработчик
 async def monitor_pools():
+    """Мониторинг пулов через WebSocket."""
     while True:
         try:
             async with connect(WS_URL) as ws:
                 await ws.program_subscribe(PROGRAM_ID)
+                logger.info("WebSocket подключен к Solana")
+
                 async for response in ws:
-                    if isinstance(response, ProgramNotification):
-                        await process_pool_update(response)
+                    try:
+                        # Проверяем, что это ProgramNotification
+                        if isinstance(response, ProgramNotification):
+                            await process_pool_update(response)
+                        else:
+                            logger.warning(f"Неожиданный формат данных: {response}")
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки данных WebSocket: {e}")
         except Exception as e:
-            logger.error(f"WebSocket error: {str(e)}")
+            logger.error(f"Ошибка WebSocket: {e}. Переподключение через 5 секунд...")
             await asyncio.sleep(5)
 
 async def process_pool_update(notification: ProgramNotification):
@@ -189,16 +198,27 @@ async def process_pool_update(notification: ProgramNotification):
     except Exception as e:
         logger.error(f"Ошибка обработки: {str(e)}")
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок."""
+    logger.error(f"Ошибка: {context.error}")
+    await context.bot.send_message(USER_ID, f"⚠️ Произошла ошибка: {context.error}")
+
+# В функции initialize_telegram_app добавьте:
+application.add_error_handler(error_handler)
+
 # Инициализация приложения Telegram
 async def initialize_telegram_app():
     await application.initialize()
     await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
     
-    # Регистрируем обработчики команд
+    # Регистрация обработчиков команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("filters", show_filters))
     application.add_handler(CommandHandler("check", check_pools))
+    
+    # Регистрация обработчика ошибок
+    application.add_error_handler(error_handler)
     
     logger.info("Telegram приложение инициализировано")
 
