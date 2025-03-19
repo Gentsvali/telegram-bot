@@ -179,21 +179,52 @@ async def track_pools():
             await asyncio.sleep(5)
 
 # Обработка изменений в пулах
-async def handle_pool_change(raw_data):
+def decode_pool_data(data: bytes) -> dict:
     try:
-        # Если данные — это строка, декодируем их
-        if isinstance(raw_data, str):
-            pool_data = json.loads(raw_data)
-        # Если данные — это байты, декодируем их в строку, а затем в JSON
-        elif isinstance(raw_data, bytes):
-            pool_data = json.loads(raw_data.decode("utf-8"))
-        else:
-            pool_data = raw_data  # Если данные уже в правильном формате
+        # Пример декодирования данных (зависит от структуры данных пула)
+        # Здесь нужно использовать документацию Solana или Meteora
+        decoded_data = {
+            "mint_x": data[:32].hex(),  # Первые 32 байта — mint_x
+            "mint_y": data[32:64].hex(),  # Следующие 32 байта — mint_y
+            "liquidity": int.from_bytes(data[64:72], byteorder="little"),  # Ликвидность
+            "volume_1h": int.from_bytes(data[72:80], byteorder="little"),  # Объем за 1 час
+            "volume_5m": int.from_bytes(data[80:88], byteorder="little"),  # Объем за 5 минут
+        }
+        return decoded_data
+    except Exception as e:
+        logger.error(f"Ошибка декодирования данных пула: {e}")
+        return {}
 
-        # Проверяем, что pool_data — это словарь
-        if isinstance(pool_data, dict):
-            if filter_pool(pool_data):
-                message = format_pool_message(pool_data)
+async def handle_pool_change(notification):
+    try:
+        # Проверяем, что notification — это объект ProgramNotification
+        if hasattr(notification, "result") and hasattr(notification.result, "value"):
+            pool_data = notification.result.value
+            pubkey = str(pool_data.pubkey)  # Публичный ключ пула
+            account = pool_data.account  # Данные аккаунта
+
+            # Декодируем данные пула
+            decoded_data = decode_pool_data(account.data)
+
+            # Формируем словарь с информацией о пуле
+            pool_info = {
+                "address": pubkey,
+                "mint_x": decoded_data.get("mint_x", "N/A"),
+                "mint_y": decoded_data.get("mint_y", "N/A"),
+                "liquidity": decoded_data.get("liquidity", 0),
+                "volume_1h": decoded_data.get("volume_1h", 0),
+                "volume_5m": decoded_data.get("volume_5m", 0),
+                "lamports": account.lamports,
+                "executable": account.executable,
+                "rent_epoch": account.rent_epoch,
+            }
+
+            # Логируем данные для отладки
+            logger.info(f"Декодированные данные пула: {pool_info}")
+
+            # Фильтруем и форматируем пул
+            if filter_pool(pool_info):
+                message = format_pool_message(pool_info)
                 await application.bot.send_message(
                     chat_id=USER_ID,
                     text=message,
@@ -201,9 +232,7 @@ async def handle_pool_change(raw_data):
                     disable_web_page_preview=True
                 )
         else:
-            logger.error("Ожидался словарь, получен другой тип данных")
-    except json.JSONDecodeError:
-        logger.error("Ошибка декодирования JSON")
+            logger.error("Неправильный формат данных: ожидался ProgramNotification")
     except Exception as e:
         logger.error(f"Ошибка обработки данных: {e}")
 
@@ -399,51 +428,18 @@ def format_pool_message(pool: dict) -> str:
         address = pool.get("address", "N/A")
         mint_x = pool.get("mint_x", "?")
         mint_y = pool.get("mint_y", "?")
-        tvl = float(pool.get("liquidity", 0)) if pool.get("liquidity") else 0
-        volume_1h = float(pool.get("volume", {}).get("hour_1", 0)) if pool.get("volume", {}).get("hour_1") else 0
-        volume_5m = float(pool.get("volume", {}).get("min_30", 0)) * 2 if pool.get("volume", {}).get("min_30") else 0
-        fee_tvl_ratio = (float(pool.get("fees_24h", 0)) / tvl * 100) if tvl > 0 else 0
-        dynamic_fee = float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)) if pool.get("fee_tvl_ratio", {}).get("hour_1") else 0
-        bin_step = pool.get("bin_step", "N/A")
-        base_fee = pool.get("base_fee_percentage", "N/A")
-
-        # Определяем пару токенов
-        sol_mint = "So11111111111111111111111111111111111111112"
-        usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
-
-        # Определяем, какой токен выбран в фильтрах (SOL или USDC)
-        stable_coin = current_filters.get("stable_coin", "USDC")  # По умолчанию USDC
-
-        if stable_coin == "SOL":
-            # Если выбран SOL, ищем токен, который идет в паре с SOL
-            if mint_x == sol_mint:
-                paired_token = mint_y  # Токен, который идет в паре с SOL
-            elif mint_y == sol_mint:
-                paired_token = mint_x  # Токен, который идет в паре с SOL
-            else:
-                paired_token = mint_x  # Если SOL нет в паре, берем первый токен
-        else:
-            # Если выбран USDC, ищем токен, который идет в паре с USDC
-            if mint_x == usdc_mint:
-                paired_token = mint_y  # Токен, который идет в паре с USDC
-            elif mint_y == usdc_mint:
-                paired_token = mint_x  # Токен, который идет в паре с USDC
-            else:
-                paired_token = mint_x  # Если USDC нет в паре, берем первый токен
+        tvl = float(pool.get("liquidity", 0)) / 1e9  # Переводим lamports в SOL
+        volume_1h = float(pool.get("volume_1h", 0)) / 1e9  # Переводим lamports в SOL
+        volume_5m = float(pool.get("volume_5m", 0)) / 1e9  # Переводим lamports в SOL
 
         # Формируем сообщение
         message = (
-            "🔥 *Обнаружены пулы с высокой доходностью* 🔥\n\n"
-            f"🔥 *{paired_token[:4]}-{stable_coin}* ([🕒 ~5h](https://t.me/meteora_pool_tracker_bot/?start=pool_info={address}_5m)) | "
-            f"RugCheck: [🟢1](https://rugcheck.xyz/tokens/{paired_token})\n"
-            f"🔗 [Meteora](https://app.meteora.ag/dlmm/{address}) | "
-            f"[DexScreener](https://dexscreener.com/solana/{paired_token}) | "
-            f"[GMGN](https://gmgn.ai/sol/token/{paired_token}) | "
-            f"[TrenchRadar](https://trench.bot/bundles/{paired_token}?all=true)\n"
-            f"💎 *Market Cap*: ${tvl / 1000:,.2f}K 🔹*TVL*: ${tvl:,.2f}K\n"
-            f"📊 *Объем*: ${volume_1h:,.2f}K 🔸 *Bin Step*: {bin_step} 💵 *Fees*: {base_fee}% | {dynamic_fee:.2f}%\n"
-            f"🤑 *Принт (5m dynamic fee/TVL)*: {fee_tvl_ratio:.2f}%\n"
-            f"🪙 *Токен*: {paired_token}"  # Теперь здесь отображается адрес токена
+            f"⭐️ {mint_x[:4]}-{mint_y[:4]} (https://dexscreener.com/solana/{address})\n"
+            f"☄️ Метеоры (https://edge.meteora.ag/dlmm/{address})\n"
+            f"😼 Наборы (https://trench.bot/bundles/{mint_x}?all=true)\n"
+            f"🟢 ТВЛ - {tvl:,.2f} SOL\n"
+            f"📊 Объем (1ч) - {volume_1h:,.2f} SOL\n"
+            f"📊 Объем (5м) - {volume_5m:,.2f} SOL"
         )
         return message
     except Exception as e:
