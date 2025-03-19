@@ -144,8 +144,8 @@ async def send_alert(context: ContextTypes.DEFAULT_TYPE, pool: dict):
     except Exception as e:
         logger.error(f"Ошибка отправки: {str(e)}")
 
-# Добавляем отсутствующую функцию check_pools
 async def check_pools(context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет новые пулы и отправляет уведомления."""
     logger.info("Запуск проверки пулов...")
     try:
         pools = await fetch_pools()
@@ -173,7 +173,13 @@ async def monitor_pools():
 
                 async for response in ws:
                     try:
-                        # Проверяем, что это ProgramNotification
+                        # Игнорируем SubscriptionResult
+                        if isinstance(response, list) and len(response) > 0:
+                            if hasattr(response[0], "result") and isinstance(response[0].result, int):
+                                logger.info("Подтверждение подписки, игнорируем")
+                                continue
+
+                        # Обрабатываем ProgramNotification
                         if isinstance(response, ProgramNotification):
                             await process_pool_update(response)
                         else:
@@ -185,6 +191,7 @@ async def monitor_pools():
             await asyncio.sleep(5)
 
 async def process_pool_update(notification: ProgramNotification):
+    """Обрабатывает уведомление о пуле."""
     try:
         pool_data = notification.result.value
         pool_info = {
@@ -196,7 +203,7 @@ async def process_pool_update(notification: ProgramNotification):
         if filter_pool(pool_info):
             await send_alert(application, pool_info)
     except Exception as e:
-        logger.error(f"Ошибка обработки: {str(e)}")
+        logger.error(f"Ошибка обработки уведомления: {e}")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ошибок."""
