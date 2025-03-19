@@ -24,7 +24,7 @@ import pytz
 
 # Solana WebSocket
 from solana.rpc.commitment import Commitment, Confirmed, Finalized
-from solana.rpc.websocket_api import connect
+from solana.rpc.websocket_api import connect, Memcmp
 from solders.pubkey import Pubkey
 from solders.account import Account
 from solders.rpc.responses import ProgramNotification
@@ -312,10 +312,9 @@ async def track_pools():
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
     commitment = Confirmed  # Уровень фиксации
 
-    # Фильтры вручную
+    # Фильтры с использованием Memcmp
     filters = [
-        {"dataSize": 200},  # Фильтр по размеру данных
-        {"memcmp": {"offset": 0, "bytes": "base64:ABC123"}},  # Фильтр по совпадению байтов
+        Memcmp(offset=0, bytes_="base64:ABC123"),  # Фильтр по совпадению байтов
     ]
 
     while True:
