@@ -23,3 +23,20 @@ requests==2.31.0
 solana==0.36.6
 websockets>=10.4
 solders>=0.15.0
+
+
+
+# Конфигурация Meteora
+API_URL = "https://dlmm-api.meteora.ag/pair/all"
+WS_URL = "wss://api.mainnet-beta.solana.com"
+PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+
+
+# Вспомогательные функции
+def sol_to_lamports(value: float) -> int:
+    return int(value * 1e9)
+
+def lamports_to_sol(lamports: int) -> float:
+    return lamports / 1e9
+
+
