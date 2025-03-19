@@ -173,6 +173,9 @@ async def monitor_pools():
 
                 async for response in ws:
                     try:
+                        # Логируем сырые данные для отладки
+                        logger.info(f"Получены данные: {response}")
+
                         # Игнорируем SubscriptionResult
                         if isinstance(response, list):
                             if len(response) > 0 and hasattr(response[0], "result") and isinstance(response[0].result, int):
