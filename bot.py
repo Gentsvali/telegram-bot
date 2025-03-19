@@ -48,7 +48,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 
 # Конфигурация API Meteora
-API_URL = "https://dlmm-api.meteora.ag/pair/all_by_groups"
+API_URL = "https://dlmm-api.meteora.ag/pair/all"
 DEFAULT_FILTERS = {
     "disable_filters": False,
     "stable_coin": "USDC",
@@ -319,10 +319,11 @@ async def fetch_pools():
             ]
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(API_URL, params=params)
             response.raise_for_status()
             data = response.json()
+            logger.info(f"Данные от API Meteora: {data}")  # Логируем ответ API
             return data.get("groups", [{}])[0].get("pairs", [])
     
     except Exception as e:
