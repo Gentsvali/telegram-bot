@@ -173,24 +173,21 @@ async def monitor_pools():
 
                 async for response in ws:
                     try:
-                        # Логируем сырые данные для отладки
-                        logger.info(f"Получены данные: {response}")
-
-                        # Игнорируем SubscriptionResult
-                        if isinstance(response, list):
-                            if len(response) > 0 and hasattr(response[0], "result") and isinstance(response[0].result, int):
+                        # Обрабатываем как список сообщений
+                        messages = response if isinstance(response, list) else [response]
+                        
+                        for msg in messages:
+                            if isinstance(msg, ProgramNotification):
+                                await process_pool_update(msg)
+                            elif hasattr(msg, "result") and isinstance(msg.result, int):
                                 logger.info("Подтверждение подписки, игнорируем")
-                                continue
-
-                        # Обрабатываем ProgramNotification
-                        if isinstance(response, ProgramNotification):
-                            await process_pool_update(response)
-                        else:
-                            logger.warning(f"Неожиданный формат данных: {response}")
+                            else:
+                                logger.warning(f"Неизвестный формат: {type(msg)}")
+                                
                     except Exception as e:
-                        logger.error(f"Ошибка обработки данных WebSocket: {e}")
+                        logger.error(f"Ошибка обработки: {e}")
         except Exception as e:
-            logger.error(f"Ошибка WebSocket: {e}. Переподключение через 5 секунд...")
+            logger.error(f"Ошибка соединения: {e}. Переподключение через 5 сек.")
             await asyncio.sleep(5)
 
 async def process_pool_update(notification: ProgramNotification):
