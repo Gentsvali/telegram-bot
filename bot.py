@@ -23,7 +23,8 @@ import httpx
 import pytz
 
 # Solana WebSocket
-from solana.rpc.websocket_api import connect
+from solana.rpc.commitment import Commitment, Confirmed, Finalized
+from solana.rpc.websocket_api import connect, MemcmpFilter
 from solders.pubkey import Pubkey
 from solders.account import Account
 from solders.rpc.responses import ProgramNotification
@@ -34,6 +35,7 @@ from json import JSONDecodeError
 # Для работы с GitHub (если нужно сохранять фильтры в репозиторий)
 import requests
 import base64  
+import websockets.exceptions
 
 # Настройка логгера
 logging.basicConfig(
@@ -306,40 +308,29 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
 async def track_pools():
-    """
-    Отслеживает пулы через WebSocket Solana и обрабатывает изменения.
-    """
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+    commitment = Confirmed  # Используем уровень фиксации "confirmed"
 
     while True:
         try:
             async with connect(ws_url) as websocket:
-                # Подписываемся на события программы
-                await websocket.program_subscribe(program_id, encoding="jsonParsed")
+                await websocket.program_subscribe(program_id, encoding="jsonParsed", commitment=commitment)
                 logger.info("WebSocket подключен к Solana ✅")
 
                 async for response in websocket:
                     try:
-                        # Логируем сырые данные (для отладки)
-                        logger.debug(f"Сырые данные: {response}")
-
-                        # Игнорируем подтверждение подписки
-                        if hasattr(response, "result") and isinstance(response.result, int):
-                            logger.debug("Подтверждение подписки, игнорируем")
-                            continue
-
-                        # Обрабатываем ProgramNotification
                         if hasattr(response, "result") and hasattr(response.result, "value"):
                             pool_data = response.result.value
                             logger.info(f"Получены данные пула: {pool_data}")
                             await handle_pool_change(pool_data)
                         else:
                             logger.error("Неправильный формат данных: ожидался ProgramNotification")
-                    except KeyError:
-                        logger.error("Ошибка формата данных WebSocket")
                     except Exception as e:
                         logger.error(f"Ошибка обработки данных: {e}", exc_info=True)
+        except websockets.exceptions.ConnectionClosedError as e:
+            logger.error(f"Соединение закрыто: {e}. Переподключение через 5 секунд...")
+            await asyncio.sleep(5)
         except Exception as e:
             logger.error(f"Ошибка WebSocket: {e}. Переподключение через 5 секунд...", exc_info=True)
             await asyncio.sleep(5)
@@ -382,45 +373,39 @@ async def handle_pool_change(notification):
             pubkey = str(pool_data.pubkey)  # Публичный ключ пула
             account = pool_data.account  # Данные аккаунта
 
-            # Декодируем данные пула
-            decoded_data = decode_pool_data(account.data)
-            if not decoded_data:
-                logger.error("Не удалось декодировать данные пула")
-                return
+            # Используем данные в формате JSON
+            if hasattr(account, "data") and isinstance(account.data, dict):
+                pool_info = {
+                    "address": pubkey,
+                    "mint_x": account.data.get("mint_x", "N/A"),
+                    "mint_y": account.data.get("mint_y", "N/A"),
+                    "liquidity": account.data.get("liquidity", 0),
+                    "volume_1h": account.data.get("volume_1h", 0),
+                    "volume_5m": account.data.get("volume_5m", 0),
+                    "bin_step": account.data.get("bin_step", 0),
+                    "base_fee": account.data.get("base_fee", 0.0),
+                    "is_verified": account.data.get("is_verified", False),
+                    "listing_time": account.data.get("listing_time", 0),
+                    "price_change_1h": account.data.get("price_change_1h", 0.0),
+                    "price_change_5m": account.data.get("price_change_5m", 0.0),
+                    "fee_change_1h": account.data.get("fee_change_1h", 0.0),
+                    "fee_change_5m": account.data.get("fee_change_5m", 0.0),
+                }
 
-            # Формируем словарь с информацией о пуле
-            pool_info = {
-                "address": pubkey,
-                "mint_x": decoded_data.get("mint_x", "N/A"),
-                "mint_y": decoded_data.get("mint_y", "N/A"),
-                "liquidity": decoded_data.get("liquidity", 0),
-                "volume_1h": decoded_data.get("volume_1h", 0),
-                "volume_5m": decoded_data.get("volume_5m", 0),
-                "bin_step": decoded_data.get("bin_step", 0),
-                "base_fee": decoded_data.get("base_fee", 0.0),
-                "is_verified": decoded_data.get("is_verified", False),
-                "listing_time": decoded_data.get("listing_time", 0),
-                "price_change_1h": decoded_data.get("price_change_1h", 0.0),
-                "price_change_5m": decoded_data.get("price_change_5m", 0.0),
-                "fee_change_1h": decoded_data.get("fee_change_1h", 0.0),
-                "fee_change_5m": decoded_data.get("fee_change_5m", 0.0),
-                "lamports": account.lamports,
-                "executable": account.executable,
-                "rent_epoch": account.rent_epoch,
-            }
+                # Логируем данные для отладки
+                logger.info(f"Декодированные данные пула: {pool_info}")
 
-            # Логируем данные для отладки
-            logger.info(f"Декодированные данные пула: {pool_info}")
-
-            # Фильтруем и форматируем пул
-            if filter_pool(pool_info):
-                message = format_pool_message(pool_info)
-                await application.bot.send_message(
-                    chat_id=USER_ID,
-                    text=message,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
+                # Фильтруем и форматируем пул
+                if filter_pool(pool_info):
+                    message = format_pool_message(pool_info)
+                    await application.bot.send_message(
+                        chat_id=USER_ID,
+                        text=message,
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True
+                    )
+            else:
+                logger.error("Неправильный формат данных: ожидался JSON-парсинг")
         else:
             logger.error("Неправильный формат данных: ожидался ProgramNotification")
     except Exception as e:
