@@ -24,7 +24,8 @@ import pytz
 
 # Solana WebSocket
 from solana.rpc.commitment import Confirmed
-from solana.rpc.websocket_api import connect
+import base58  # Для кодирования данных в base58 формат
+from solana.rpc.websocket_api import connect, Commitment  # Для WebSocket подключения
 from solders.pubkey import Pubkey
 from solders.account import Account
 from solders.rpc.responses import ProgramNotification
@@ -310,34 +311,46 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-    commitment = Confirmed  # Уровень фиксации
+    commitment = Confirmed
 
-    # Фильтры вручную
+    # Правильная структура memcmp фильтра
     filters = [
-        {"dataSize": 200},  # Фильтр по размеру данных
-        {"memcmp": {"offset": 0, "bytes": "base64:ABC123"}},  # Фильтр по совпадению байтов
+        {
+            "memcmp": {
+                "offset": 0,
+                "bytes": bs58.encode(Buffer.from("your_data")).toString()
+            }
+        }
     ]
 
     while True:
         try:
             async with connect(ws_url) as websocket:
-                # Подписываемся на события программы с фильтрами
-                await websocket.program_subscribe(program_id, encoding="jsonParsed", commitment=commitment, filters=filters)
-                logger.info("WebSocket подключен к Solana ✅")
+                subscription = await websocket.program_subscribe(
+                    program_id,
+                    encoding="jsonParsed", 
+                    commitment=commitment,
+                    filters=filters
+                )
+                logger.info(f"WebSocket подключен к Solana, ID подписки: {subscription} ✅")
 
-                async for response in websocket:
+                async for msg in websocket:
+                    if msg.type == "error":
+                        logger.error(f"Ошибка WebSocket: {msg.data}")
+                        break
+                        
                     try:
-                        if hasattr(response, "result") and hasattr(response.result, "value"):
-                            pool_data = response.result.value
-                            logger.info(f"Получены данные пула: {pool_data}")
-                            await handle_pool_change(pool_data)
-                        else:
-                            logger.error("Неправильный формат данных: ожидался ProgramNotification")
+                        if hasattr(msg, "result") and hasattr(msg.result, "value"):
+                            await handle_pool_change(msg.result.value)
                     except Exception as e:
-                        logger.error(f"Ошибка обработки данных: {e}", exc_info=True)
+                        logger.error(f"Ошибка обработки сообщения: {e}")
+
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("WebSocket соединение закрыто, переподключение...")
         except Exception as e:
-            logger.error(f"Ошибка WebSocket: {e}. Переподключение через 5 секунд...", exc_info=True)
-            await asyncio.sleep(5)
+            logger.error(f"Ошибка WebSocket: {e}")
+        
+        await asyncio.sleep(5)  # Пауза перед переподключением
 
 def decode_pool_data(data: bytes) -> dict:
     """
@@ -366,54 +379,30 @@ def decode_pool_data(data: bytes) -> dict:
         logger.error(f"Ошибка декодирования данных пула: {e}", exc_info=True)
         return {}
 
-async def handle_pool_change(notification):
-    """
-    Обрабатывает изменения в пулах и отправляет уведомления, если пул соответствует фильтрам.
-    """
+async def handle_pool_change(pool_data):
     try:
-        # Проверяем, что notification — это объект ProgramNotification
-        if hasattr(notification, "result") and hasattr(notification.result, "value"):
-            pool_data = notification.result.value
-            pubkey = str(pool_data.pubkey)  # Публичный ключ пула
-            account = pool_data.account  # Данные аккаунта
+        if not pool_data:
+            return
 
-            # Используем данные в формате JSON
-            if hasattr(account, "data") and isinstance(account.data, dict):
-                pool_info = {
-                    "address": pubkey,
-                    "mint_x": account.data.get("mint_x", "N/A"),
-                    "mint_y": account.data.get("mint_y", "N/A"),
-                    "liquidity": account.data.get("liquidity", 0),
-                    "volume_1h": account.data.get("volume_1h", 0),
-                    "volume_5m": account.data.get("volume_5m", 0),
-                    "bin_step": account.data.get("bin_step", 0),
-                    "base_fee": account.data.get("base_fee", 0.0),
-                    "is_verified": account.data.get("is_verified", False),
-                    "listing_time": account.data.get("listing_time", 0),
-                    "price_change_1h": account.data.get("price_change_1h", 0.0),
-                    "price_change_5m": account.data.get("price_change_5m", 0.0),
-                    "fee_change_1h": account.data.get("fee_change_1h", 0.0),
-                    "fee_change_5m": account.data.get("fee_change_5m", 0.0),
-                }
+        # Извлекаем данные из пула
+        pool_info = {
+            "address": str(pool_data.get("pubkey", "N/A")),
+            "data": pool_data.get("account", {}).get("data", {})
+        }
 
-                # Логируем данные для отладки
-                logger.info(f"Декодированные данные пула: {pool_info}")
-
-                # Фильтруем и форматируем пул
-                if filter_pool(pool_info):
-                    message = format_pool_message(pool_info)
-                    await application.bot.send_message(
-                        chat_id=USER_ID,
-                        text=message,
-                        parse_mode="Markdown",
-                        disable_web_page_preview=True
-                    )
-            else:
-                logger.error("Неправильный формат данных: ожидался JSON-парсинг")
-        else:
-            logger.error("Неправильный формат данных: ожидался ProgramNotification")
+        # Проверяем и форматируем данные
+        if filter_pool(pool_info):
+            message = format_pool_message(pool_info)
+            if message:
+                await application.bot.send_message(
+                    chat_id=USER_ID,
+                    text=message,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+                
     except Exception as e:
-        logger.error(f"Ошибка обработки данных: {e}", exc_info=True)
+        logger.error(f"Ошибка в handle_pool_change: {e}", exc_info=True)
 
 async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
