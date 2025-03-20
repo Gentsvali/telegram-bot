@@ -312,31 +312,63 @@ async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
     commitment = Confirmed
+    
+    # Добавляем переменные для контроля частоты
+    last_processed = {}
+    RATE_LIMIT = 5  # секунд между обработками одного пула
+    MAX_REQUESTS_PER_MINUTE = 60
 
     while True:
         try:
             async with connect(ws_url) as websocket:
-                # Подписываемся без фильтров
                 subscription = await websocket.program_subscribe(
                     program_id,
                     encoding="jsonParsed",
                     commitment=commitment
                 )
-                logger.info(f"WebSocket подключен к Solana, ID подписки: {subscription} ✅")
+                logger.info("WebSocket подключен к Solana ✅")
+
+                request_count = 0
+                minute_start = time.time()
 
                 async for msg in websocket:
                     try:
+                        current_time = time.time()
+                        
+                        # Проверяем лимит запросов в минуту
+                        if current_time - minute_start > 60:
+                            request_count = 0
+                            minute_start = current_time
+                        
+                        if request_count >= MAX_REQUESTS_PER_MINUTE:
+                            await asyncio.sleep(60 - (current_time - minute_start))
+                            continue
+
                         if hasattr(msg, "result") and hasattr(msg.result, "value"):
-                            await handle_pool_change(msg.result.value)
+                            pool_data = msg.result.value
+                            pool_key = str(pool_data.get("pubkey", ""))
+
+                            # Проверяем таймаут для этого пула
+                            if pool_key in last_processed:
+                                time_since_last = current_time - last_processed[pool_key]
+                                if time_since_last < RATE_LIMIT:
+                                    continue
+
+                            # Обрабатываем пул
+                            if await handle_pool_change(pool_data):
+                                request_count += 1
+                                last_processed[pool_key] = current_time
+
                     except Exception as e:
                         logger.error(f"Ошибка обработки сообщения: {e}")
+                        await asyncio.sleep(1)
 
         except websockets.exceptions.ConnectionClosed:
             logger.warning("WebSocket соединение закрыто, переподключение...")
+            await asyncio.sleep(5)
         except Exception as e:
             logger.error(f"Ошибка WebSocket: {e}")
-        
-        await asyncio.sleep(5)
+            await asyncio.sleep(5)
 
 def decode_pool_data(data: bytes) -> dict:
     """
@@ -368,27 +400,39 @@ def decode_pool_data(data: bytes) -> dict:
 async def handle_pool_change(pool_data):
     try:
         if not pool_data:
-            return
+            return False
 
-        # Извлекаем данные из пула
+        # Базовая валидация данных
+        if not all(key in pool_data.get("account", {}).get("data", {}) 
+                  for key in ["bin_step", "liquidity", "volume_1h"]):
+            return False
+
         pool_info = {
             "address": str(pool_data.get("pubkey", "N/A")),
-            "data": pool_data.get("account", {}).get("data", {})
+            "bin_step": int(pool_data["account"]["data"]["bin_step"]),
+            "tvl": float(pool_data["account"]["data"]["liquidity"]),
+            "volume_1h": float(pool_data["account"]["data"]["volume_1h"])
         }
 
-        # Проверяем и форматируем данные
-        if filter_pool(pool_info):
+        # Применяем только основные фильтры для экономии ресурсов
+        if (pool_info["bin_step"] in current_filters["bin_steps"] and
+            pool_info["tvl"] >= current_filters["min_tvl"] and
+            pool_info["volume_1h"] >= current_filters["volume_1h_min"]):
+
             message = format_pool_message(pool_info)
-            if message:
-                await application.bot.send_message(
-                    chat_id=USER_ID,
-                    text=message,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
-                
+            await application.bot.send_message(
+                chat_id=USER_ID,
+                text=message,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+            return True
+
+        return False
+
     except Exception as e:
-        logger.error(f"Ошибка в handle_pool_change: {e}", exc_info=True)
+        logger.error(f"Ошибка обработки данных пула: {e}")
+        return False
 
 async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
