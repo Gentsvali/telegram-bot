@@ -309,36 +309,22 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
 async def track_pools():
-    ws_url = "wss://api.mainnet-beta.solana.com"
+    ws_url = "wss://api.mainnet-beta.solana.com"  # Используем wss [(1)](https://solana.stackexchange.com/questions/4910/has-mainnet-websocket-address-support-been-discontinued)
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
     commitment = Confirmed
-
-    # Правильная структура memcmp фильтра согласно документации
-    filters = [
-        {
-            "memcmp": {
-                "offset": 0,
-                "bytes": base58.b58encode(b"your_data").decode("ascii")
-            }
-        }
-    ]
 
     while True:
         try:
             async with connect(ws_url) as websocket:
+                # Подписываемся на программу без фильтров сначала [(2)](https://solana.com/docs/rpc/websocket/programsubscribe)
                 subscription = await websocket.program_subscribe(
                     program_id,
                     encoding="jsonParsed", 
-                    commitment=commitment,
-                    filters=filters
+                    commitment=commitment
                 )
                 logger.info(f"WebSocket подключен к Solana, ID подписки: {subscription} ✅")
 
                 async for msg in websocket:
-                    if msg.type == "error":
-                        logger.error(f"Ошибка WebSocket: {msg.data}")
-                        break
-                        
                     try:
                         if hasattr(msg, "result") and hasattr(msg.result, "value"):
                             await handle_pool_change(msg.result.value)
@@ -350,7 +336,7 @@ async def track_pools():
         except Exception as e:
             logger.error(f"Ошибка WebSocket: {e}")
         
-        await asyncio.sleep(5)  # Пауза перед переподключением
+        await asyncio.sleep(5)
 
 def decode_pool_data(data: bytes) -> dict:
     """
