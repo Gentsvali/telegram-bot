@@ -313,21 +313,14 @@ async def track_pools():
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
     commitment = Confirmed
 
-    # Создаем фильтр для memcmp
-    filters = [
-        {
-            "dataSize": 165  # Размер аккаунта DLMM пула
-        }
-    ]
-
     while True:
         try:
             async with connect(ws_url) as websocket:
+                # Подписываемся без фильтров
                 subscription = await websocket.program_subscribe(
                     program_id,
                     encoding="jsonParsed",
-                    commitment=commitment,
-                    filters=filters
+                    commitment=commitment
                 )
                 logger.info(f"WebSocket подключен к Solana, ID подписки: {subscription} ✅")
 
