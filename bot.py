@@ -313,12 +313,12 @@ async def track_pools():
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
     commitment = Confirmed
 
-    # Правильная структура memcmp фильтра
+    # Правильная структура memcmp фильтра согласно документации
     filters = [
         {
             "memcmp": {
                 "offset": 0,
-                "bytes": bs58.encode(Buffer.from("your_data")).toString()
+                "bytes": base58.b58encode(b"your_data").decode("ascii")
             }
         }
     ]
