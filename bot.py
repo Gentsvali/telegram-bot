@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import time
 import json
 import signal
 from datetime import datetime, timedelta
@@ -308,14 +309,67 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
+# Добавьте новые константы для буферизации
+BUFFER_TIMEOUT = 300  # 5 минут
+MESSAGE_BATCH_SIZE = 5  # Количество сообщений в одной группе
+
+class MessageBuffer:
+    def __init__(self):
+        self.messages = []
+        self.last_process_time = time.time()
+    
+    async def add_message(self, message):
+        self.messages.append(message)
+        await self.process_if_needed()
+    
+    async def process_if_needed(self):
+        current_time = time.time()
+        if (len(self.messages) >= MESSAGE_BATCH_SIZE or 
+            current_time - self.last_process_time >= BUFFER_TIMEOUT):
+            await self.process_messages()
+    
+    async def process_messages(self):
+        if not self.messages:
+            return
+            
+        try:
+            # Группируем сообщения по пулам
+            unique_messages = {}
+            for msg in self.messages:
+                pool_key = msg.get("pubkey", "unknown")
+                unique_messages[pool_key] = msg
+            
+            # Форматируем и отправляем сообщения
+            formatted_messages = []
+            for msg in unique_messages.values():
+                if filter_pool(msg):  # Используем существующую функцию фильтрации
+                    formatted_messages.append(format_pool_message(msg))
+            
+            if formatted_messages:
+                message_text = "\n\n".join(formatted_messages)
+                await application.bot.send_message(
+                    chat_id=USER_ID,
+                    text=message_text,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True
+                )
+            
+            self.messages.clear()
+            self.last_process_time = time.time()
+            
+        except Exception as e:
+            logger.error(f"Ошибка обработки сообщений: {e}", exc_info=True)
+
+# Создаем глобальный буфер сообщений
+message_buffer = MessageBuffer()
+
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-    commitment = Confirmed
+    commitment = "confirmed"
     
-    # Добавляем переменные для контроля частоты
     last_processed = {}
-    RATE_LIMIT = 5  # секунд между обработками одного пула
+    RATE_LIMIT = 15  # секунд между обработками одного пула
     MAX_REQUESTS_PER_MINUTE = 60
 
     while True:
@@ -324,7 +378,8 @@ async def track_pools():
                 subscription = await websocket.program_subscribe(
                     program_id,
                     encoding="jsonParsed",
-                    commitment=commitment
+                    commitment=commitment,
+                    filters=[{"dataSize": 165}]  # Размер данных пула
                 )
                 logger.info("WebSocket подключен к Solana ✅")
 
@@ -335,7 +390,7 @@ async def track_pools():
                     try:
                         current_time = time.time()
                         
-                        # Проверяем лимит запросов в минуту
+                        # Контроль частоты запросов
                         if current_time - minute_start > 60:
                             request_count = 0
                             minute_start = current_time
@@ -348,16 +403,17 @@ async def track_pools():
                             pool_data = msg.result.value
                             pool_key = str(pool_data.get("pubkey", ""))
 
-                            # Проверяем таймаут для этого пула
+                            # Проверка частоты обработки пула
                             if pool_key in last_processed:
                                 time_since_last = current_time - last_processed[pool_key]
                                 if time_since_last < RATE_LIMIT:
                                     continue
 
-                            # Обрабатываем пул
-                            if await handle_pool_change(pool_data):
-                                request_count += 1
-                                last_processed[pool_key] = current_time
+                            # Добавляем сообщение в буфер
+                            await message_buffer.add_message(pool_data)
+                            
+                            request_count += 1
+                            last_processed[pool_key] = current_time
 
                     except Exception as e:
                         logger.error(f"Ошибка обработки сообщения: {e}")
