@@ -309,18 +309,25 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
 async def track_pools():
-    ws_url = "wss://api.mainnet-beta.solana.com"  # Используем wss [(1)](https://solana.stackexchange.com/questions/4910/has-mainnet-websocket-address-support-been-discontinued)
+    ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
     commitment = Confirmed
+
+    # Создаем фильтр для memcmp
+    filters = [
+        {
+            "dataSize": 165  # Размер аккаунта DLMM пула
+        }
+    ]
 
     while True:
         try:
             async with connect(ws_url) as websocket:
-                # Подписываемся на программу без фильтров сначала [(2)](https://solana.com/docs/rpc/websocket/programsubscribe)
                 subscription = await websocket.program_subscribe(
                     program_id,
-                    encoding="jsonParsed", 
-                    commitment=commitment
+                    encoding="jsonParsed",
+                    commitment=commitment,
+                    filters=filters
                 )
                 logger.info(f"WebSocket подключен к Solana, ID подписки: {subscription} ✅")
 
