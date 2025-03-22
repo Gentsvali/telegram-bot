@@ -26,11 +26,15 @@ import pytz
 
 # Solana WebSocket
 from solana.rpc.commitment import Confirmed
+from solana.rpc.websocket_api import connect
 import base58  # Для кодирования данных в base58 формат
 from solana.rpc.websocket_api import connect, Commitment  # Для WebSocket подключения
 from solders.pubkey import Pubkey
 from solders.account import Account
 from solders.rpc.responses import ProgramNotification
+from solders.instruction import Instruction
+from solders.message import Message
+from solders.transaction import Transaction
 
 # Для работы с JSON
 from json import JSONDecodeError
