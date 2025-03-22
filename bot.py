@@ -368,6 +368,8 @@ class MessageBuffer:
 # Создаем глобальный буфер сообщений
 message_buffer = MessageBuffer()
 
+from solders.rpc.requests import Memcmp
+
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
@@ -380,11 +382,17 @@ async def track_pools():
     while True:
         try:
             async with connect(ws_url) as websocket:
+                # Создаем фильтр Memcmp с обязательным аргументом bytes_
+                memcmp_filter = Memcmp(
+                    offset=0,  # Смещение в данных аккаунта
+                    bytes_=base58.b58encode(b"some_data_to_match")  # Байты для сравнения
+                )
+                
                 subscription = await websocket.program_subscribe(
                     program_id,
                     encoding="jsonParsed",
                     commitment=commitment,
-                    filters=[{"dataSize": 165}]  # Размер данных пула
+                    filters=[memcmp_filter]  # Используем созданный фильтр
                 )
                 logger.info("WebSocket подключен к Solana ✅")
 
