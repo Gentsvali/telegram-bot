@@ -1,5 +1,6 @@
 import os
 import logging
+import sys
 import asyncio
 import time
 import json
@@ -918,6 +919,11 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при загрузке фильтров: {e}", exc_info=True)
 
 # Обработка сигналов для корректного завершения
+async def shutdown():
+    logger.info("Завершение работы бота...")
+    await application.stop()
+    await application.shutdown()
+
 def handle_shutdown(signum, frame):
     """
     Обрабатывает сигналы завершения (SIGINT, SIGTERM) и корректно останавливает бота.
@@ -929,10 +935,7 @@ def handle_shutdown(signum, frame):
 signal.signal(signal.SIGINT, handle_shutdown)  # Обработка Ctrl+C
 signal.signal(signal.SIGTERM, handle_shutdown)  # Обработка сигнала завершения (например, от systemd)
 
-async def shutdown():
-    logger.info("Завершение работы бота...")
-    await application.stop()
-    await application.shutdown()
+
 
 # Запуск приложения
 if __name__ == "__main__":
