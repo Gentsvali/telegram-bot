@@ -6,7 +6,6 @@ import json
 import signal
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
-from bot import app  # Импортируйте ваше приложение
 
 # Веб-фреймворк
 from quart import Quart, request
@@ -938,4 +937,4 @@ async def shutdown():
 # Запуск приложения
 if __name__ == "__main__":
     logger.info(f"Запуск бота на порту {PORT}...")
-    app.run()
+    app.run(host='0.0.0.0', port=PORT)
