@@ -12,3 +12,4 @@ solders==0.23.0
 python-telegram-bot
 python-dotenv
 base58
+gunicorn
