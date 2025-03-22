@@ -35,6 +35,7 @@ from solders.rpc.responses import ProgramNotification
 from solders.instruction import Instruction
 from solders.message import Message
 from solders.transaction import Transaction
+from solana.rpc.types import MemcmpOpts  # Добавляем этот импорт
 
 # Для работы с JSON
 from json import JSONDecodeError
@@ -376,23 +377,33 @@ async def track_pools():
     commitment = "confirmed"
     
     last_processed = {}
-    RATE_LIMIT = 15  # секунд между обработками одного пула
+    RATE_LIMIT = 15
     MAX_REQUESTS_PER_MINUTE = 60
 
     while True:
         try:
             async with connect(ws_url) as websocket:
-                # Создаем фильтр Memcmp с обязательным аргументом bytes_
-                memcmp_filter = Memcmp(
-                    offset=0,  # Смещение в данных аккаунта
-                    bytes_=base58.b58encode(b"some_data_to_match")  # Байты для сравнения
-                )
+                # Создаем правильный формат memcmp фильтра
+                memcmp_filter = {
+                    "memcmp": {
+                        "offset": 0,
+                        "bytes": base58.b58encode(b"some_data_to_match").decode('ascii')
+                    }
+                }
+                
+                # Создаем конфигурацию для подписки
+                subscription_config = {
+                    "encoding": "jsonParsed",
+                    "commitment": commitment,
+                    "filters": [
+                        memcmp_filter,
+                        {"dataSize": 165}  # Добавляем фильтр по размеру данных
+                    ]
+                }
                 
                 subscription = await websocket.program_subscribe(
                     program_id,
-                    encoding="jsonParsed",
-                    commitment=commitment,
-                    filters=[memcmp_filter]  # Используем созданный фильтр
+                    subscription_config
                 )
                 logger.info("WebSocket подключен к Solana ✅")
 
@@ -403,7 +414,6 @@ async def track_pools():
                     try:
                         current_time = time.time()
                         
-                        # Контроль частоты запросов
                         if current_time - minute_start > 60:
                             request_count = 0
                             minute_start = current_time
@@ -416,17 +426,16 @@ async def track_pools():
                             pool_data = msg.result.value
                             pool_key = str(pool_data.get("pubkey", ""))
 
-                            # Проверка частоты обработки пула
                             if pool_key in last_processed:
                                 time_since_last = current_time - last_processed[pool_key]
                                 if time_since_last < RATE_LIMIT:
                                     continue
 
-                            # Добавляем сообщение в буфер
-                            await message_buffer.add_message(pool_data)
-                            
-                            request_count += 1
-                            last_processed[pool_key] = current_time
+                            # Проверяем данные перед добавлением в буфер
+                            if isinstance(pool_data, dict) and "pubkey" in pool_data:
+                                await message_buffer.add_message(pool_data)
+                                request_count += 1
+                                last_processed[pool_key] = current_time
 
                     except Exception as e:
                         logger.error(f"Ошибка обработки сообщения: {e}")
