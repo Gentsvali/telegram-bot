@@ -41,7 +41,7 @@ from solana.rpc.types import MemcmpOpts  # Добавляем этот импо�
 from json import JSONDecodeError
 
 # Для работы с GitHub (если нужно сохранять фильтры в репозиторий)
-import requests as http_requests
+import requests 
 import base64  
 import websockets.exceptions
 
@@ -372,42 +372,31 @@ message_buffer = MessageBuffer()
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-    commitment = "confirmed"
     
-    last_processed = {}
-    RATE_LIMIT = 15
-    MAX_REQUESTS_PER_MINUTE = 60
-
     while True:
         try:
             async with connect(ws_url) as websocket:
-                # Создаем правильный формат memcmp фильтра
-                memcmp_filter = {
-                    "memcmp": {
-                        "offset": 0,
-                        "bytes": base58.b58encode(b"some_data_to_match").decode('ascii')
-                    }
-                }
-                
-                # Создаем конфигурацию для подписки
                 subscription_config = {
-    "encoding": "jsonParsed",
-    "commitment": commitment,
-    "filters": [
-        {
-            "memcmp": {
-                "offset": 0,  # Позиция в байтах для начала сравнения
-                "bytes": "ваши_данные_в_base58"  # Данные для сравнения в формате base58
-            }
-        },
-        {"dataSize": 165}  # Размер данных для фильтрации
-    ]
-}
+                    "encoding": "jsonParsed",
+                    "commitment": "confirmed",
+                    "filters": [
+                        {
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": base58.b58encode(bytes([0])).decode('ascii')
+                            }
+                        },
+                        {
+                            "dataSize": 165
+                        }
+                    ]
+                }
                 
                 subscription = await websocket.program_subscribe(
                     program_id,
                     subscription_config
                 )
+
                 logger.info("WebSocket подключен к Solana ✅")
 
                 request_count = 0
