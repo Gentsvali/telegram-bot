@@ -21,21 +21,12 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # Асинхронные HTTP-запросы (если вдруг понадобится)
 import httpx
 
-# Работа с временными зонами
-import pytz
-
 # Solana WebSocket
 from solana.rpc.commitment import Confirmed
 from solana.rpc.websocket_api import connect
-import base58  # Для кодирования данных в base58 формат
-from solana.rpc.websocket_api import connect, Commitment  # Для WebSocket подключения
-from solders.pubkey import Pubkey
-from solders.account import Account
-from solders.rpc.responses import ProgramNotification
-from solders.instruction import Instruction
-from solders.message import Message
-from solders.transaction import Transaction
-from solana.rpc.types import MemcmpOpts  # Добавляем этот импорт
+import base58  
+from solders.pubkey import Pubkey  
+from solders.rpc.requests import Memcmp
 
 # Для работы с JSON
 from json import JSONDecodeError
@@ -200,7 +191,7 @@ def handle_shutdown(signum, frame):
     Обрабатывает сигналы завершения (SIGINT, SIGTERM) и корректно останавливает бота.
     """
     logger.info(f"Получен сигнал {signum}. Останавливаю бота...")
-    asyncio.create_task(shutdown())
+    asyncio.run(shutdown())
 
 # Регистрируем обработчики сигналов
 signal.signal(signal.SIGINT, handle_shutdown)  # Обработка Ctrl+C
@@ -369,6 +360,9 @@ class MessageBuffer:
 # Создаем глобальный буфер сообщений
 message_buffer = MessageBuffer()
 
+import asyncio
+from solders.rpc.requests import Memcmp  # Убедитесь, что это правильный импорт
+
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
@@ -377,21 +371,17 @@ async def track_pools():
         try:
             async with connect(ws_url) as websocket:
                 try:
+                    # Создаем фильтр Memcmp
+                    memcmp_filter = Memcmp(
+                        offset=0,
+                        bytes_=base58.b58encode(b"your_filter_data")  # Замените на реальные данные
+                    )
+
                     subscription = await websocket.program_subscribe(
                         program_id,
                         encoding="jsonParsed",
                         commitment="confirmed",
-                        filters=[
-                            {
-                                "memcmp": {
-                                    "offset": 0,
-                                    "bytes": base58.b58encode(bytes([0])).decode('ascii')
-                                }
-                            },
-                            {
-                                "dataSize": 165
-                            }
-                        ]
+                        filters=[memcmp_filter, {"dataSize": 165}]
                     )
                     logger.info("WebSocket подключен к Solana ✅")
 
@@ -438,6 +428,7 @@ async def track_pools():
         except Exception as e:
             logger.error(f"Ошибка подключения к WebSocket: {e}")
             await asyncio.sleep(5)  # Пауза перед повторной попыткой
+
 
 def decode_pool_data(data: bytes) -> dict:
     """
@@ -929,25 +920,6 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Фильтры успешно загружены из GitHub ✅")
     except Exception as e:
         logger.error(f"Ошибка при загрузке фильтров: {e}", exc_info=True)
-
-# Обработка сигналов для корректного завершения
-async def shutdown():
-    logger.info("Завершение работы бота...")
-    await application.stop()
-    await application.shutdown()
-
-def handle_shutdown(signum, frame):
-    """
-    Обрабатывает сигналы завершения (SIGINT, SIGTERM) и корректно останавливает бота.
-    """
-    logger.info(f"Получен сигнал {signum}. Останавливаю бота...")
-    asyncio.create_task(shutdown())
-
-# Регистрируем обработчики сигналов
-signal.signal(signal.SIGINT, handle_shutdown)  # Обработка Ctrl+C
-signal.signal(signal.SIGTERM, handle_shutdown)  # Обработка сигнала завершения (например, от systemd)
-
-
 
 # Запуск приложения
 if __name__ == "__main__":
