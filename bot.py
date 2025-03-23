@@ -376,69 +376,68 @@ async def track_pools():
     while True:
         try:
             async with connect(ws_url) as websocket:
-                subscription_config = {
-                    "encoding": "jsonParsed",
-                    "commitment": "confirmed",
-                    "filters": [
-                        {
-                            "memcmp": {
-                                "offset": 0,
-                                "bytes": base58.b58encode(bytes([0])).decode('ascii')
+                try:
+                    subscription = await websocket.program_subscribe(
+                        program_id,
+                        encoding="jsonParsed",
+                        commitment="confirmed",
+                        filters=[
+                            {
+                                "memcmp": {
+                                    "offset": 0,
+                                    "bytes": base58.b58encode(bytes([0])).decode('ascii')
+                                }
+                            },
+                            {
+                                "dataSize": 165
                             }
-                        },
-                        {
-                            "dataSize": 165
-                        }
-                    ]
-                }
-                
-                subscription = await websocket.program_subscribe(
-                    program_id,
-                    subscription_config
-                )
+                        ]
+                    )
+                    logger.info("WebSocket подключен к Solana ✅")
 
-                logger.info("WebSocket подключен к Solana ✅")
+                    request_count = 0
+                    minute_start = time.time()
 
-                request_count = 0
-                minute_start = time.time()
+                    async for msg in websocket:
+                        try:
+                            current_time = time.time()
+                            
+                            if current_time - minute_start > 60:
+                                request_count = 0
+                                minute_start = current_time
+                            
+                            if request_count >= MAX_REQUESTS_PER_MINUTE:
+                                await asyncio.sleep(60 - (current_time - minute_start))
+                                continue
 
-                async for msg in websocket:
-                    try:
-                        current_time = time.time()
-                        
-                        if current_time - minute_start > 60:
-                            request_count = 0
-                            minute_start = current_time
-                        
-                        if request_count >= MAX_REQUESTS_PER_MINUTE:
-                            await asyncio.sleep(60 - (current_time - minute_start))
-                            continue
+                            if hasattr(msg, "result") and hasattr(msg.result, "value"):
+                                pool_data = msg.result.value
+                                pool_key = str(pool_data.get("pubkey", ""))
 
-                        if hasattr(msg, "result") and hasattr(msg.result, "value"):
-                            pool_data = msg.result.value
-                            pool_key = str(pool_data.get("pubkey", ""))
+                                if pool_key in last_processed:
+                                    time_since_last = current_time - last_processed[pool_key]
+                                    if time_since_last < RATE_LIMIT:
+                                        continue
 
-                            if pool_key in last_processed:
-                                time_since_last = current_time - last_processed[pool_key]
-                                if time_since_last < RATE_LIMIT:
-                                    continue
+                                # Проверяем данные перед добавлением в буфер
+                                if isinstance(pool_data, dict) and "pubkey" in pool_data and "account" in pool_data:
+                                    account_data = pool_data.get("account", {}).get("data", {})
+                                    if isinstance(account_data, dict) and "bin_step" in account_data and "liquidity" in account_data:
+                                        await message_buffer.add_message(pool_data)
+                                        request_count += 1
+                                        last_processed[pool_key] = current_time
 
-                            # Проверяем данные перед добавлением в буфер
-                            if isinstance(pool_data, dict) and "pubkey" in pool_data:
-                                await message_buffer.add_message(pool_data)
-                                request_count += 1
-                                last_processed[pool_key] = current_time
+                        except Exception as e:
+                            logger.error(f"Ошибка обработки сообщения: {e}")
+                            await asyncio.sleep(1)
 
-                    except Exception as e:
-                        logger.error(f"Ошибка обработки сообщения: {e}")
-                        await asyncio.sleep(1)
+                except Exception as e:
+                    logger.error(f"Ошибка при создании подписки: {e}")
+                    await asyncio.sleep(5)  # Пауза перед повторной попыткой
 
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("WebSocket соединение закрыто, переподключение...")
-            await asyncio.sleep(5)
         except Exception as e:
-            logger.error(f"Ошибка WebSocket: {e}")
-            await asyncio.sleep(5)
+            logger.error(f"Ошибка подключения к WebSocket: {e}")
+            await asyncio.sleep(5)  # Пауза перед повторной попыткой
 
 def decode_pool_data(data: bytes) -> dict:
     """
