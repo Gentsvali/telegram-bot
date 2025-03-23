@@ -21,9 +21,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # Асинхронные HTTP-запросы (если вдруг понадобится)
 import httpx
 
-# Solana WebSocket
 from solana.rpc.commitment import Confirmed
-from solana.rpc.websocket_api import connect
 import base58  
 from solders.pubkey import Pubkey   
 
@@ -33,7 +31,6 @@ from json import JSONDecodeError
 # Для работы с GitHub (если нужно сохранять фильтры в репозиторий)
 import requests 
 import base64  
-import websockets.exceptions
 
 # Настройка логгера
 logging.basicConfig(
@@ -134,54 +131,6 @@ application.add_error_handler(error_handler)
 
 # Инициализация Quart приложения
 app = Quart(__name__)
-
-@app.before_serving
-async def startup():
-    """
-    Запускает бота и инициализирует необходимые компоненты.
-    """
-    try:
-        # Инициализация Telegram бота
-        await application.initialize()
-        await application.start()
-        logger.info("Telegram бот успешно инициализирован ✅")
-
-        # Установка вебхука
-        await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-        logger.info(f"Вебхук установлен: {WEBHOOK_URL}/{TELEGRAM_TOKEN} ✅")
-
-        # Загрузка фильтров
-        await load_filters(application)
-        logger.info("Фильтры успешно загружены ✅")
-
-        # Запуск задачи для отслеживания пулов через WebSocket
-        asyncio.create_task(track_pools())
-        logger.info("Задача для отслеживания пулов через WebSocket запущена ✅")
-
-        logger.info("Приложение и вебхук успешно инициализированы 🚀")
-    except Exception as e:
-        logger.error(f"Ошибка при запуске приложения: {e}", exc_info=True)
-        raise
-
-@app.after_serving
-async def shutdown():
-    """
-    Корректно завершает работу бота и освобождает ресурсы.
-    """
-    try:
-        logger.info("Завершение работы бота...")
-        
-        # Сначала закрываем все WebSocket соединения
-        # Потом останавливаем бота
-        if application.running:
-            await application.stop()
-            await application.shutdown()
-            logger.info("Бот успешно остановлен")
-        else:
-            logger.info("Бот уже остановлен")
-            
-    except Exception as e:
-        logger.error(f"Ошибка при завершении работы: {e}")
 
 # Обработка сигналов для корректного завершения
 def handle_shutdown(signum, frame):
@@ -306,109 +255,61 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
-# Добавьте новые константы для буферизации
-BUFFER_TIMEOUT = 300  # 5 минут
-MESSAGE_BATCH_SIZE = 5  # Количество сообщений в одной группе
-
-class MessageBuffer:
-    def __init__(self):
-        self.messages = []
-        self.last_process_time = time.time()
-    
-    async def add_message(self, message):
-        self.messages.append(message)
-        await self.process_if_needed()
-    
-    async def process_if_needed(self):
-        current_time = time.time()
-        if (len(self.messages) >= MESSAGE_BATCH_SIZE or 
-            current_time - self.last_process_time >= BUFFER_TIMEOUT):
-            await self.process_messages()
-    
-async def process_messages(self):
-    if not self.messages:  # Отступ здесь
-        return  # Отступ здесь
-        
-    try:
-        # Группируем сообщения по пулам
-        unique_messages = {}
-        for msg in self.messages:
-            logger.info(f"Добавляем сообщение: {msg}")  # Логируем данные
-            pool_key = msg.get("pubkey", "unknown")
-            if isinstance(pool_key, (str, int)):  # Проверяем ключ
-                unique_messages[pool_key] = msg
-            else:
-                logger.error(f"Некорректный ключ пула: {pool_key}")
-        
-        # Форматируем и отправляем сообщения
-        formatted_messages = []
-        for msg in unique_messages.values():
-            if filter_pool(msg):  # Используем существующую функцию фильтрации
-                formatted_messages.append(format_pool_message(msg))
-        
-        if formatted_messages:
-            message_text = "\n\n".join(formatted_messages)
-            await application.bot.send_message(
-                chat_id=USER_ID,
-                text=message_text,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
-        
-        self.messages.clear()
-        self.last_process_time = time.time()
-        
-    except Exception as e:
-        logger.error(f"Ошибка обработки сообщений: {e}", exc_info=True)
-
-# Создаем глобальный буфер сообщений
-message_buffer = MessageBuffer()
-
 async def track_pools():
-    ws_url = "wss://api.mainnet-beta.solana.com"
-    program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM program ID
-    
-    while True:
-        try:
-            async with connect(ws_url) as websocket:
-                await websocket.program_subscribe(
+    """
+    Проверяет новые пулы каждые 5 минут
+    """
+    try:
+        # Настраиваем подключение
+        connection = Connection("https://api.mainnet-beta.solana.com", "confirmed")
+        program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM program ID
+        
+        while True:
+            try:
+                # Получаем все аккаунты программы
+                accounts = await connection.get_program_accounts(
                     program_id,
-                    {
-                        "encoding": "jsonParsed",
-                        "filters": [
-                            {
-                                "dataSize": 165
-                            }
-                        ]
-                    }
+                    encoding="jsonParsed",
+                    filters=[
+                        {
+                            "dataSize": 165  # Размер аккаунта DLMM пула
+                        }
+                    ]
                 )
-                logger.info("WebSocket подключен к Solana ✅")
                 
-                async for msg in websocket:
+                logger.info(f"Найдено {len(accounts)} пулов")
+                
+                # Обрабатываем каждый аккаунт
+                for account in accounts:
                     try:
-                        if hasattr(msg, "result") and hasattr(msg.result, "value"):
-                            pool_data = msg.result.value
-                            # Логируем полученные данные
-                            logger.info(f"Получены данные: {pool_data}")
-                            
-                            # Проверяем, что pool_data — это словарь
-                            if isinstance(pool_data, dict):
-                                # Извлекаем нужные данные
-                                address = pool_data.get("address", "unknown")
-                                tvl = pool_data.get("tvl", 0)
-                                volume_1h = pool_data.get("volume_1h", 0)
-                                
-                                # Логируем извлеченные данные
-                                logger.info(f"Адрес: {address}, TVL: {tvl}, Объем за 1 час: {volume_1h}")
-                            else:
-                                logger.error(f"Некорректный формат данных: {type(pool_data)}")
-                    except Exception as e:
-                        logger.error(f"Ошибка обработки сообщения: {e}")
-                        await asyncio.sleep(1)
+                        pool_data = {
+                            "pubkey": str(account.pubkey),
+                            "account": {
+                                "data": account.account.data,
+                                "executable": account.account.executable,
+                                "lamports": account.account.lamports,
+                                "owner": str(account.account.owner),
+                            }
+                        }
                         
-        except Exception as e:
-            logger.error(f"Ошибка подключения к WebSocket: {e}")
-            await asyncio.sleep(5)
+                        # Проверяем и отправляем уведомление если пул новый
+                        if pool_data["pubkey"] not in last_checked_pools:
+                            await handle_pool_change(pool_data)
+                            last_checked_pools.add(pool_data["pubkey"])
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки пула {account.pubkey}: {e}")
+                        continue
+                        
+                # Ждем 5 минут
+                await asyncio.sleep(300)
+                
+            except Exception as e:
+                logger.error(f"Ошибка получения пулов: {e}")
+                await asyncio.sleep(60)  # Ждем минуту при ошибке
+                
+    except Exception as e:
+        logger.error(f"Критическая ошибка в track_pools: {e}")
 
 def decode_pool_data(data: bytes) -> dict:
     """
@@ -437,42 +338,22 @@ def decode_pool_data(data: bytes) -> dict:
         logger.error(f"Ошибка декодирования данных пула: {e}", exc_info=True)
         return {}
 
-async def handle_pool_change(pool_data):
+async def handle_pool_change(pool_data: dict):
+    """
+    Обрабатывает изменения в пуле и отправляет уведомления
+    """
     try:
-        if not pool_data:
-            return False
-
-        # Базовая валидация данных
-        if not all(key in pool_data.get("account", {}).get("data", {}) 
-                  for key in ["bin_step", "liquidity", "volume_1h"]):
-            return False
-
-        pool_info = {
-            "address": str(pool_data.get("pubkey", "N/A")),
-            "bin_step": int(pool_data["account"]["data"]["bin_step"]),
-            "tvl": float(pool_data["account"]["data"]["liquidity"]),
-            "volume_1h": float(pool_data["account"]["data"]["volume_1h"])
-        }
-
-        # Применяем только основные фильтры для экономии ресурсов
-        if (pool_info["bin_step"] in current_filters["bin_steps"] and
-            pool_info["tvl"] >= current_filters["min_tvl"] and
-            pool_info["volume_1h"] >= current_filters["volume_1h_min"]):
-
-            message = format_pool_message(pool_info)
+        if filter_pool(pool_data):
+            message = format_pool_message(pool_data)
             await application.bot.send_message(
                 chat_id=USER_ID,
                 text=message,
                 parse_mode="Markdown",
                 disable_web_page_preview=True
             )
-            return True
-
-        return False
-
+            logger.info(f"Отправлено уведомление о новом пуле {pool_data['pubkey']}")
     except Exception as e:
-        logger.error(f"Ошибка обработки данных пула: {e}")
-        return False
+        logger.error(f"Ошибка обработки изменений пула: {e}")
 
 async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
