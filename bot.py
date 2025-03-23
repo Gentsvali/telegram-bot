@@ -326,36 +326,40 @@ class MessageBuffer:
             await self.process_messages()
     
     async def process_messages(self):
-        if not self.messages:
-            return
-            
-        try:
-            # Группируем сообщения по пулам
-            unique_messages = {}
-            for msg in self.messages:
-                pool_key = msg.get("pubkey", "unknown")
+    if not self.messages:
+        return
+        
+    try:
+        # Группируем сообщения по пулам
+        unique_messages = {}
+        for msg in self.messages:
+            logger.info(f"Добавляем сообщение: {msg}")  # Логируем данные
+            pool_key = msg.get("pubkey", "unknown")
+            if isinstance(pool_key, (str, int)):  # Проверяем ключ
                 unique_messages[pool_key] = msg
-            
-            # Форматируем и отправляем сообщения
-            formatted_messages = []
-            for msg in unique_messages.values():
-                if filter_pool(msg):  # Используем существующую функцию фильтрации
-                    formatted_messages.append(format_pool_message(msg))
-            
-            if formatted_messages:
-                message_text = "\n\n".join(formatted_messages)
-                await application.bot.send_message(
-                    chat_id=USER_ID,
-                    text=message_text,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
-            
-            self.messages.clear()
-            self.last_process_time = time.time()
-            
-        except Exception as e:
-            logger.error(f"Ошибка обработки сообщений: {e}", exc_info=True)
+            else:
+                logger.error(f"Некорректный ключ пула: {pool_key}")
+        
+        # Форматируем и отправляем сообщения
+        formatted_messages = []
+        for msg in unique_messages.values():
+            if filter_pool(msg):  # Используем существующую функцию фильтрации
+                formatted_messages.append(format_pool_message(msg))
+        
+        if formatted_messages:
+            message_text = "\n\n".join(formatted_messages)
+            await application.bot.send_message(
+                chat_id=USER_ID,
+                text=message_text,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+        
+        self.messages.clear()
+        self.last_process_time = time.time()
+        
+    except Exception as e:
+        logger.error(f"Ошибка обработки сообщений: {e}", exc_info=True)
 
 # Создаем глобальный буфер сообщений
 message_buffer = MessageBuffer()
