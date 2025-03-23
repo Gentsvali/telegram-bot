@@ -14,3 +14,4 @@ python-dotenv
 base58
 gunicorn
 hypercorn
+asyncio

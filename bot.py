@@ -362,29 +362,38 @@ message_buffer = MessageBuffer()
 
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
-    program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+    program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM program ID
     
     while True:
         try:
-            connection = Connection(ws_url, "confirmed")
-            
-            # Используем onProgramAccountChange вместо прямого WebSocket
-            await connection.on_program_account_change(
-                program_id,
-                lambda account_info: message_buffer.add_message(account_info),
-                "confirmed",
-                encoding="jsonParsed",
-                filters=[{"dataSize": 165}]
-            )
-            
-            logger.info("Подписка на программу установлена ✅")
-            
-            # Держим соединение активным
-            while True:
-                await asyncio.sleep(60)
+            async with connect(ws_url) as websocket:
+                # Правильный формат подписки согласно документации
+                await websocket.program_subscribe(
+                    program_id,
+                    {
+                        "encoding": "jsonParsed",
+                        "filters": [
+                            {
+                                "dataSize": 165
+                            }
+                        ]
+                    }
+                )
                 
+                logger.info("WebSocket подключен к Solana ✅")
+                
+                async for msg in websocket:
+                    try:
+                        if hasattr(msg, "result") and hasattr(msg.result, "value"):
+                            pool_data = msg.result.value
+                            await message_buffer.add_message(pool_data)
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки сообщения: {e}")
+                        await asyncio.sleep(1)
+                        
         except Exception as e:
-            logger.error(f"Ошибка подключения: {e}")
+            logger.error(f"Ошибка подключения к WebSocket: {e}")
             await asyncio.sleep(5)
 
 def decode_pool_data(data: bytes) -> dict:
