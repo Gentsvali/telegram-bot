@@ -325,9 +325,9 @@ class MessageBuffer:
             current_time - self.last_process_time >= BUFFER_TIMEOUT):
             await self.process_messages()
     
-    async def process_messages(self):
-        if not self.messages:  # Отступ здесь
-        return
+async def process_messages(self):
+    if not self.messages:  # Отступ здесь
+        return  # Отступ здесь
         
     try:
         # Группируем сообщения по пулам
