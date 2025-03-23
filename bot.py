@@ -366,9 +366,7 @@ async def track_pools():
     
     while True:
         try:
-            # Подключаемся к WebSocket
             async with connect(ws_url) as websocket:
-                # Подписываемся на обновления пулов
                 await websocket.program_subscribe(
                     program_id,
                     {
@@ -382,28 +380,27 @@ async def track_pools():
                 )
                 logger.info("WebSocket подключен к Solana ✅")
                 
-                # Получаем сообщения от WebSocket
                 async for msg in websocket:
                     try:
-                        # Проверяем, что сообщение содержит данные
                         if hasattr(msg, "result") and hasattr(msg.result, "value"):
                             pool_data = msg.result.value
-                            
                             # Логируем полученные данные
                             logger.info(f"Получены данные: {pool_data}")
                             
                             # Проверяем, что pool_data — это словарь
                             if isinstance(pool_data, dict):
-                                await message_buffer.add_message(pool_data)
+                                # Проверяем, что данные содержат нужные ключи
+                                if "pubkey" in pool_data and isinstance(pool_data["pubkey"], (str, int)):
+                                    await message_buffer.add_message(pool_data)
+                                else:
+                                    logger.error(f"Некорректные данные: отсутствует 'pubkey' или он не является строкой/числом")
                             else:
                                 logger.error(f"Некорректный формат данных: {type(pool_data)}")
                     except Exception as e:
-                        # Логируем ошибку обработки сообщения
                         logger.error(f"Ошибка обработки сообщения: {e}")
                         await asyncio.sleep(1)
                         
         except Exception as e:
-            # Логируем ошибку подключения к WebSocket
             logger.error(f"Ошибка подключения к WebSocket: {e}")
             await asyncio.sleep(5)
 
