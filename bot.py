@@ -21,6 +21,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # Асинхронные HTTP-запросы (если вдруг понадобится)
 import httpx
 
+# Solana WebSocket
 from solana.rpc.commitment import Confirmed
 import base58  
 from solders.pubkey import Pubkey   
@@ -131,6 +132,54 @@ application.add_error_handler(error_handler)
 
 # Инициализация Quart приложения
 app = Quart(__name__)
+
+@app.before_serving
+async def startup():
+    """
+    Запускает бота и инициализирует необходимые компоненты.
+    """
+    try:
+        # Инициализация Telegram бота
+        await application.initialize()
+        await application.start()
+        logger.info("Telegram бот успешно инициализирован ✅")
+
+        # Установка вебхука
+        await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+        logger.info(f"Вебхук установлен: {WEBHOOK_URL}/{TELEGRAM_TOKEN} ✅")
+
+        # Загрузка фильтров
+        await load_filters(application)
+        logger.info("Фильтры успешно загружены ✅")
+
+        # Запуск задачи для отслеживания пулов через WebSocket
+        asyncio.create_task(track_pools())
+        logger.info("Задача для отслеживания пулов через WebSocket запущена ✅")
+
+        logger.info("Приложение и вебхук успешно инициализированы 🚀")
+    except Exception as e:
+        logger.error(f"Ошибка при запуске приложения: {e}", exc_info=True)
+        raise
+
+@app.after_serving
+async def shutdown():
+    """
+    Корректно завершает работу бота и освобождает ресурсы.
+    """
+    try:
+        logger.info("Завершение работы бота...")
+        
+        # Сначала закрываем все WebSocket соединения
+        # Потом останавливаем бота
+        if application.running:
+            await application.stop()
+            await application.shutdown()
+            logger.info("Бот успешно остановлен")
+        else:
+            logger.info("Бот уже остановлен")
+            
+    except Exception as e:
+        logger.error(f"Ошибка при завершении работы: {e}")
 
 # Обработка сигналов для корректного завершения
 def handle_shutdown(signum, frame):
@@ -266,13 +315,14 @@ async def track_pools():
         
         while True:
             try:
+                logger.info("Начинаем проверку пулов...")
                 # Получаем все аккаунты программы
                 accounts = await connection.get_program_accounts(
                     program_id,
                     encoding="jsonParsed",
                     filters=[
                         {
-                            "dataSize": 165  # Размер аккаунта DLMM пула
+                            "dataSize": 165
                         }
                     ]
                 )
@@ -294,6 +344,7 @@ async def track_pools():
                         
                         # Проверяем и отправляем уведомление если пул новый
                         if pool_data["pubkey"] not in last_checked_pools:
+                            logger.info(f"Обнаружен новый пул: {pool_data['pubkey']}")
                             await handle_pool_change(pool_data)
                             last_checked_pools.add(pool_data["pubkey"])
                             
@@ -301,6 +352,7 @@ async def track_pools():
                         logger.error(f"Ошибка обработки пула {account.pubkey}: {e}")
                         continue
                         
+                logger.info("Проверка пулов завершена, ожидание 5 минут...")
                 # Ждем 5 минут
                 await asyncio.sleep(300)
                 
@@ -343,15 +395,17 @@ async def handle_pool_change(pool_data: dict):
     Обрабатывает изменения в пуле и отправляет уведомления
     """
     try:
+        logger.info(f"Обработка данных пула: {pool_data['pubkey']}")
         if filter_pool(pool_data):
             message = format_pool_message(pool_data)
+            logger.info(f"Отправка сообщения для пула: {pool_data['pubkey']}")
             await application.bot.send_message(
                 chat_id=USER_ID,
                 text=message,
                 parse_mode="Markdown",
                 disable_web_page_preview=True
             )
-            logger.info(f"Отправлено уведомление о новом пуле {pool_data['pubkey']}")
+            logger.info(f"Сообщение успешно отправлено для пула {pool_data['pubkey']}")
     except Exception as e:
         logger.error(f"Ошибка обработки изменений пула: {e}")
 
