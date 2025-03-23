@@ -181,9 +181,9 @@ async def startup():
         raise
 
 @app.after_serving
-async def shutdown():
+async def shutdown_app():
     """
-    Корректно завершает работу бота и освобождает ресурсы.
+    Корректно завершает работу бота и освобождает ресурсы при остановке Quart.
     """
     try:
         logger.info("Завершение работы бота...")
@@ -200,20 +200,28 @@ async def shutdown():
     except Exception as e:
         logger.error(f"Ошибка при завершении работы: {e}")
 
-# Обработка сигналов для корректного завершения
-async def shutdown(signal, loop):
+async def shutdown_signal(signal, loop):
     """
-    Обрабатывает сигналы завершения (SIGINT, SIGTERM)
+    Обрабатывает сигналы завершения (SIGINT, SIGTERM).
     """
     logger.info(f"Получен сигнал {signal.name}. Останавливаю бота...")
     await application.stop()
     await application.shutdown()
     loop.stop()
 
-def handle_shutdown():
+def handle_shutdown(signum, frame):
+    """
+    Обрабатывает сигналы завершения (SIGINT, SIGTERM) и вызывает асинхронный shutdown.
+    """
+    logger.info(f"Получен сигнал {signum}. Останавливаю бота...")
     loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(sig, loop)))
+    
+    # Создаем задачу для асинхронного завершения
+    shutdown_task = loop.create_task(shutdown_signal(signal.Signals(signum), loop))
+    
+    # Ожидаем завершения задачи
+    loop.run_until_complete(shutdown_task)
+    loop.close()
 
 # Регистрируем обработчики сигналов
 signal.signal(signal.SIGINT, handle_shutdown)  # Обработка Ctrl+C
