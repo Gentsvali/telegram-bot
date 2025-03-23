@@ -361,7 +361,6 @@ class MessageBuffer:
 message_buffer = MessageBuffer()
 
 async def track_pools():
-    # Адрес WebSocket и ID программы Solana
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM program ID
     
@@ -389,10 +388,15 @@ async def track_pools():
                         # Проверяем, что сообщение содержит данные
                         if hasattr(msg, "result") and hasattr(msg.result, "value"):
                             pool_data = msg.result.value
+                            
                             # Логируем полученные данные
                             logger.info(f"Получены данные: {pool_data}")
-                            # Отправляем данные в буфер сообщений
-                            await message_buffer.add_message(pool_data)
+                            
+                            # Проверяем, что pool_data — это словарь
+                            if isinstance(pool_data, dict):
+                                await message_buffer.add_message(pool_data)
+                            else:
+                                logger.error(f"Некорректный формат данных: {type(pool_data)}")
                     except Exception as e:
                         # Логируем ошибку обработки сообщения
                         logger.error(f"Ошибка обработки сообщения: {e}")
