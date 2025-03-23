@@ -25,8 +25,7 @@ import httpx
 from solana.rpc.commitment import Confirmed
 from solana.rpc.websocket_api import connect
 import base58  
-from solders.pubkey import Pubkey  
-from solders.rpc.requests import Memcmp
+from solders.pubkey import Pubkey   
 
 # Для работы с JSON
 from json import JSONDecodeError
@@ -360,9 +359,6 @@ class MessageBuffer:
 # Создаем глобальный буфер сообщений
 message_buffer = MessageBuffer()
 
-import asyncio
-from solders.rpc.requests import Memcmp  # Убедитесь, что это правильный импорт
-
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
@@ -372,10 +368,12 @@ async def track_pools():
             async with connect(ws_url) as websocket:
                 try:
                     # Создаем фильтр Memcmp
-                    memcmp_filter = Memcmp(
-                        offset=0,
-                        bytes_=base58.b58encode(b"your_filter_data")  # Замените на реальные данные
-                    )
+                    memcmp_filter = {
+    "memcmp": {
+        "offset": 0,
+        "bytes": base58.b58encode(b"your_filter_data").decode()
+    }
+}
 
                     subscription = await websocket.program_subscribe(
                         program_id,
