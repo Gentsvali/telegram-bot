@@ -369,8 +369,6 @@ class MessageBuffer:
 # Создаем глобальный буфер сообщений
 message_buffer = MessageBuffer()
 
-from solders.rpc.requests import Memcmp
-
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
     program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
