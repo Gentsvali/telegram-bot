@@ -326,7 +326,7 @@ class MessageBuffer:
             await self.process_messages()
     
     async def process_messages(self):
-    if not self.messages:
+        if not self.messages:  # Отступ здесь
         return
         
     try:
