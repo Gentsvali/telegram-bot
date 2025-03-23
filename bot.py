@@ -393,11 +393,13 @@ async def track_pools():
                             
                             # Проверяем, что pool_data — это словарь
                             if isinstance(pool_data, dict):
-                                # Проверяем, что данные содержат нужные ключи
-                                if "pubkey" in pool_data and isinstance(pool_data["pubkey"], (str, int)):
-                                    await message_buffer.add_message(pool_data)
-                                else:
-                                    logger.error(f"Некорректные данные: отсутствует 'pubkey' или он не является строкой/числом")
+                                # Извлекаем нужные данные
+                                address = pool_data.get("address", "unknown")
+                                tvl = pool_data.get("tvl", 0)
+                                volume_1h = pool_data.get("volume_1h", 0)
+                                
+                                # Логируем извлеченные данные
+                                logger.info(f"Адрес: {address}, TVL: {tvl}, Объем за 1 час: {volume_1h}")
                             else:
                                 logger.error(f"Некорректный формат данных: {type(pool_data)}")
                     except Exception as e:
