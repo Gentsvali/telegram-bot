@@ -25,6 +25,7 @@ import httpx
 from solana.rpc.commitment import Confirmed
 import base58  
 from solders.pubkey import Pubkey   
+from solana.rpc.api import Connection
 
 # Для работы с JSON
 from json import JSONDecodeError
