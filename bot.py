@@ -170,27 +170,28 @@ async def shutdown():
     """
     try:
         logger.info("Завершение работы бота...")
-
-        # Остановка Telegram бота
-        await application.stop()
-        logger.info("Telegram бот успешно остановлен ✅")
-
-        # Завершение работы Telegram бота
-        await application.shutdown()
-        logger.info("Telegram бот успешно завершил работу ✅")
-
-        logger.info("Приложение успешно завершило работу 🛑")
+        
+        # Сначала закрываем все WebSocket соединения
+        # Потом останавливаем бота
+        if application.running:
+            await application.stop()
+            await application.shutdown()
+            logger.info("Бот успешно остановлен")
+        else:
+            logger.info("Бот уже остановлен")
+            
     except Exception as e:
-        logger.error(f"Ошибка при завершении работы: {e}", exc_info=True)
-        raise
+        logger.error(f"Ошибка при завершении работы: {e}")
 
 # Обработка сигналов для корректного завершения
 def handle_shutdown(signum, frame):
     """
-    Обрабатывает сигналы завершения (SIGINT, SIGTERM) и корректно останавливает бота.
+    Обрабатывает сигналы завершения (SIGINT, SIGTERM)
     """
     logger.info(f"Получен сигнал {signum}. Останавливаю бота...")
-    asyncio.run(shutdown())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(shutdown())
+    loop.close()
 
 # Регистрируем обработчики сигналов
 signal.signal(signal.SIGINT, handle_shutdown)  # Обработка Ctrl+C
@@ -361,32 +362,29 @@ message_buffer = MessageBuffer()
 
 async def track_pools():
     ws_url = "wss://api.mainnet-beta.solana.com"
-    program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM program ID
+    program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
     
     while True:
         try:
-            async with connect(ws_url) as websocket:
-                subscription = await websocket.program_subscribe(
-                    program_id,
-                    encoding="jsonParsed",
-                    commitment="confirmed",
-                    filters=[{"dataSize": 165}]  # Размер данных аккаунта DLMM пула
-                )
+            connection = Connection(ws_url, "confirmed")
+            
+            # Используем onProgramAccountChange вместо прямого WebSocket
+            await connection.on_program_account_change(
+                program_id,
+                lambda account_info: message_buffer.add_message(account_info),
+                "confirmed",
+                encoding="jsonParsed",
+                filters=[{"dataSize": 165}]
+            )
+            
+            logger.info("Подписка на программу установлена ✅")
+            
+            # Держим соединение активным
+            while True:
+                await asyncio.sleep(60)
                 
-                logger.info("WebSocket подключен к Solana ✅")
-                
-                async for msg in websocket:
-                    try:
-                        if hasattr(msg, "result") and hasattr(msg.result, "value"):
-                            pool_data = msg.result.value
-                            await message_buffer.add_message(pool_data)
-                            
-                    except Exception as e:
-                        logger.error(f"Ошибка обработки сообщения: {e}")
-                        await asyncio.sleep(1)
-                        
         except Exception as e:
-            logger.error(f"Ошибка подключения к WebSocket: {e}")
+            logger.error(f"Ошибка подключения: {e}")
             await asyncio.sleep(5)
 
 def decode_pool_data(data: bytes) -> dict:
