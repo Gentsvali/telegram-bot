@@ -25,7 +25,7 @@ import httpx
 from solana.rpc.commitment import Confirmed
 import base58  
 from solders.pubkey import Pubkey   
-from solana.rpc.api import Connection
+from solana.rpc.api import Client as Connection  # Используем Client вместо Connection
 
 # Для работы с JSON
 from json import JSONDecodeError
@@ -56,10 +56,12 @@ required_env_vars = ["TELEGRAM_TOKEN", "GITHUB_TOKEN", "USER_ID", "WEBHOOK_URL"]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 
 if missing_vars:
-    raise ValueError(
+    error_message = (
         f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}. "
         "Пожалуйста, проверьте настройки."
     )
+    logger.error(error_message)
+    raise ValueError(error_message)
 
 # Загрузка переменных окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -69,10 +71,10 @@ REPO_NAME = "telegram-bot"
 FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))  
+PORT = int(os.environ.get("PORT", 10000))
 
 # Дополнительные настройки (если нужно)
-DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"  # Режим отладки 
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"  # Режим отладки
 
 # Конфигурация фильтров по умолчанию
 DEFAULT_FILTERS = {
@@ -93,6 +95,22 @@ DEFAULT_FILTERS = {
     "fee_change_1h_min": 0.0,  # Минимальное изменение комиссии за 1 час (в %)
     "fee_change_5m_min": 0.0,  # Минимальное изменение комиссии за 5 минут (в %)
 }
+
+# Проверка корректности фильтров
+def validate_filters(filters: dict) -> bool:
+    """
+    Проверяет корректность фильтров.
+    """
+    required_keys = [
+        "disable_filters", "stable_coin", "bin_steps", "min_tvl", "min_fdv",
+        "base_fee_max", "fee_tvl_ratio_24h_min", "volume_1h_min", "volume_5m_min",
+        "dynamic_fee_tvl_ratio_min", "verified_only", "min_listing_time",
+        "price_change_1h_min", "price_change_5m_min", "fee_change_1h_min", "fee_change_5m_min"
+    ]
+    return all(key in filters for key in required_keys)
+
+if not validate_filters(DEFAULT_FILTERS):
+    raise ValueError("Некорректная конфигурация фильтров по умолчанию.")
 
 # Текущие фильтры (инициализируются значениями по умолчанию)
 current_filters = DEFAULT_FILTERS.copy()
@@ -119,11 +137,11 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Произошла ошибка: {context.error}", exc_info=True)
 
         # Отправляем сообщение об ошибке пользователю (если возможно)
-        if update and update.effective_chat:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="⚠️ Произошла ошибка. Пожалуйста, попробуйте позже."
-            )
+        chat_id = update.effective_chat.id if update and update.effective_chat else USER_ID
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ Произошла ошибка. Пожалуйста, попробуйте позже."
+        )
     except Exception as e:
         # Если что-то пошло не так при обработке ошибки
         logger.error(f"Ошибка в обработчике ошибок: {e}")
@@ -183,14 +201,19 @@ async def shutdown():
         logger.error(f"Ошибка при завершении работы: {e}")
 
 # Обработка сигналов для корректного завершения
-def handle_shutdown(signum, frame):
+async def shutdown(signal, loop):
     """
     Обрабатывает сигналы завершения (SIGINT, SIGTERM)
     """
-    logger.info(f"Получен сигнал {signum}. Останавливаю бота...")
+    logger.info(f"Получен сигнал {signal.name}. Останавливаю бота...")
+    await application.stop()
+    await application.shutdown()
+    loop.stop()
+
+def handle_shutdown():
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(shutdown())
-    loop.close()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(sig, loop)))
 
 # Регистрируем обработчики сигналов
 signal.signal(signal.SIGINT, handle_shutdown)  # Обработка Ctrl+C
@@ -444,7 +467,12 @@ async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_
         logger.info(f"Пользователь {update.effective_user.id} обновил фильтры через JSON")
     
     except json.JSONDecodeError:
-        await update.message.reply_text("❌ Ошибка: Некорректный JSON. Проверьте формат.")
+        example_filters = json.dumps(DEFAULT_FILTERS, indent=4)
+        await update.message.reply_text(
+            "❌ Ошибка: Некорректный JSON. Проверьте формат.\n"
+            f"Пример корректного JSON:\n```json\n{example_filters}\n```",
+            parse_mode="Markdown"
+        )
         logger.warning(f"Ошибка декодирования JSON от пользователя {update.effective_user.id}")
     except ValueError as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -487,6 +515,9 @@ def load_filters_from_github():
 
         # Выполняем GET-запрос
         response = requests.get(url, headers=headers)
+        if response.status_code == 404:
+            logger.warning(f"Файл {FILE_PATH} не найден в репозитории.")
+            return
         response.raise_for_status()  # Проверяем статус ответа
 
         # Декодируем содержимое файла
@@ -549,7 +580,6 @@ def filter_pool(pool: dict) -> bool:
     Фильтрует пул на основе текущих фильтров.
     Возвращает True, если пул соответствует критериям.
     """
-    # Если фильтрация отключена, возвращаем True для всех пулов
     if current_filters.get("disable_filters", False):
         return True
 
@@ -615,6 +645,7 @@ def filter_pool(pool: dict) -> bool:
 def get_non_sol_token(mint_x: str, mint_y: str) -> str:
     """
     Возвращает токен, который не является Solana.
+    Если оба токена не SOL, возвращает первый токен.
     """
     sol_mint = "So11111111111111111111111111111111111111112"
     if mint_x == sol_mint:
@@ -804,15 +835,31 @@ def healthcheck():
     """
     Возвращает статус работы сервиса.
     """
-    return {"status": "OK"}, 200
+    try:
+        # Проверяем состояние сервиса
+        if application.running:
+            return {"status": "OK"}, 200
+        else:
+            return {"status": "ERROR", "message": "Сервис не запущен"}, 500
+    except Exception as e:
+        logger.error(f"Ошибка при проверке состояния сервиса: {e}", exc_info=True)
+        return {"status": "ERROR", "message": str(e)}, 500
 
 # Главная страница
 @app.route('/')
 async def home():
     """
-    Возвращает статус работы сервиса.
+    Возвращает статус работы сервиса и информацию о приложении.
     """
-    return {"status": "OK"}, 200
+    return {
+        "status": "OK",
+        "version": "1.0.0",
+        "description": "Telegram Bot для отслеживания пулов Meteora",
+        "endpoints": {
+            "healthcheck": "/healthcheck",
+            "webhook": f"/{TELEGRAM_TOKEN}"
+        }
+    }, 200
 
 # Функции для работы с закрепленными сообщениями
 async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -839,5 +886,8 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
 
 # Запуск приложения
 if __name__ == "__main__":
-    logger.info(f"Запуск бота на порту {PORT}...")
-    app.run(host='0.0.0.0', port=PORT)
+    try:
+        logger.info(f"Запуск бота на порту {PORT}...")
+        app.run(host='0.0.0.0', port=PORT)
+    except Exception as e:
+        logger.error(f"Ошибка при запуске приложения: {e}", exc_info=True)
