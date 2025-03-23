@@ -70,7 +70,7 @@ REPO_NAME = "telegram-bot"
 FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 8080))  # Порт по умолчанию: 8080
+PORT = int(os.environ.get("PORT", 10000))  
 
 # Дополнительные настройки (если нужно)
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"  # Режим отладки 
