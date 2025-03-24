@@ -21,15 +21,12 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # Асинхронные HTTP-запросы (если вдруг понадобится)
 import httpx
 
-# Solana WebSocket
+# Solana импорты
 from solana.rpc.commitment import Confirmed
-import base58  
-from solders.pubkey import Pubkey   
-from solana.rpc.api import Client as Connection  # Используем Client вместо Connection
-try:
-    from solana.rpc.filters import DataSize, Memcmp  # Основной вариант
-except ImportError:
-    from solders.rpc.requests import DataSize, Memcmp  # Альтернативный вариант
+from solana.rpc.api import Client as Connection
+from solana.rpc.api import DataSize, Memcmp  # Основной вариант
+from solders.pubkey import Pubkey
+import base58
 
 # Для работы с JSON
 from json import JSONDecodeError
@@ -363,7 +360,7 @@ async def track_pools():
         # Правильное создание фильтров:
         filters = [
             DataSize(165),  # Фильтр по размеру данных
-            # Memcmp(offset=0, bytes=b"your_data")  # Пример memcmp-фильтра
+            # Memcmp(offset=0, bytes=b"data")  # Пример memcmp-фильтра
         ]
 
         while True:
