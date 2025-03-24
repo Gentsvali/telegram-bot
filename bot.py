@@ -26,6 +26,7 @@ from solana.rpc.commitment import Confirmed
 import base58  
 from solders.pubkey import Pubkey   
 from solana.rpc.api import Client as Connection  # Используем Client вместо Connection
+from solders.rpc.filters import DataSize, Memcmp  # Импорт из solders вместо solana
 
 # Для работы с JSON
 from json import JSONDecodeError
@@ -210,18 +211,22 @@ async def shutdown_signal(signal, loop):
     loop.stop()
 
 def handle_shutdown(signum, frame):
-    """
-    Обрабатывает сигналы завершения (SIGINT, SIGTERM) и вызывает асинхронный shutdown.
-    """
+    """Обработчик сигналов завершения"""
     logger.info(f"Получен сигнал {signum}. Останавливаю бота...")
-    loop = asyncio.get_event_loop()
     
-    # Создаем задачу для асинхронного завершения
-    shutdown_task = loop.create_task(shutdown_signal(signal.Signals(signum), loop))
-    
-    # Ожидаем завершения задачи
-    loop.run_until_complete(shutdown_task)
-    loop.close()
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Для Python 3.7+ используем create_task
+            shutdown_task = loop.create_task(application.shutdown())
+            
+            # Даем время на корректное завершение (макс 5 сек)
+            loop.run_until_complete(asyncio.wait_for(shutdown_task, timeout=5))
+    except Exception as e:
+        logger.error(f"Ошибка при завершении: {e}")
+    finally:
+        if 'loop' in locals() and not loop.is_closed():
+            loop.close()
 
 # Регистрируем обработчики сигналов
 signal.signal(signal.SIGINT, handle_shutdown)  # Обработка Ctrl+C
@@ -336,67 +341,70 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
-async def track_pools():
-    """
-    Проверяет новые пулы каждые 5 минут.
-    """
+async def test_connection():
+    """Проверяет подключение к Solana"""
     try:
-        # Настраиваем подключение
-        connection = Connection("https://api.mainnet-beta.solana.com", "confirmed")
+        connection = Client("https://api.mainnet-beta.solana.com")
+        version = await connection.get_version()
+        logger.info(f"Версия Solana: {version.value}")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка подключения: {e}")
+        return False
+
+async def track_pools():
+    try:
+        connection = Client("https://api.mainnet-beta.solana.com")
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+
+        # Правильное создание фильтров:
+        filters = [
+            DataSize(165),  # Фильтр по размеру данных
+            # Memcmp(offset=0, bytes=b"your_data")  # Пример memcmp-фильтра
+        ]
 
         while True:
             try:
                 logger.info("Начинаем проверку пулов...")
                 
-                # Получаем все аккаунты программы с правильными параметрами
-                accounts = await connection.get_program_accounts(
+                # Получаем аккаунты с правильными фильтрами
+                resp = await connection.get_program_accounts(
                     program_id,
                     encoding="base64",
-                    filters=[{"dataSize": 165}]
+                    filters=filters
                 )
+                accounts = resp.value
 
                 logger.info(f"Найдено {len(accounts)} пулов")
 
-                # Обрабатываем каждый аккаунт
                 for account in accounts:
                     try:
-                        # Правильное извлечение данных аккаунта
-                        if isinstance(account, dict):  # Для совместимости с разными версиями solana-py
-                            pubkey = str(account['pubkey'])
-                            account_data = account['account']
-                        else:  # Для новых версий solana-py
-                            pubkey = str(account.pubkey)
-                            account_data = account.account
-
                         pool_data = {
-                            "pubkey": pubkey,
+                            "pubkey": str(account.pubkey),
                             "account": {
-                                "data": account_data['data'] if isinstance(account_data, dict) else account_data.data,
-                                "executable": account_data['executable'] if isinstance(account_data, dict) else account_data.executable,
-                                "lamports": account_data['lamports'] if isinstance(account_data, dict) else account_data.lamports,
-                                "owner": str(account_data['owner'] if isinstance(account_data, dict) else account_data.owner),
+                                "data": account.account.data,
+                                "owner": str(account.account.owner),
+                                "lamports": account.account.lamports,
+                                "rent_epoch": account.account.rent_epoch,
+                                "executable": account.account.executable
                             }
                         }
 
                         if pool_data["pubkey"] not in last_checked_pools:
-                            logger.info(f"Обнаружен новый пул: {pool_data['pubkey']}")
                             await handle_pool_change(pool_data)
                             last_checked_pools.add(pool_data["pubkey"])
 
                     except Exception as e:
-                        logger.error(f"Ошибка обработки пула: {e}", exc_info=True)
-                        continue
+                        logger.error(f"Ошибка обработки пула: {e}")
 
-                logger.info("Проверка пулов завершена, ожидание 5 минут...")
                 await asyncio.sleep(300)
 
             except Exception as e:
-                logger.error(f"Ошибка получения пулов: {e}", exc_info=True)
+                logger.error(f"Ошибка получения пулов: {e}")
                 await asyncio.sleep(60)
 
     except Exception as e:
-        logger.error(f"Критическая ошибка в track_pools: {e}", exc_info=True)
+        logger.error(f"Критическая ошибка: {e}")
 
 def decode_pool_data(data: bytes) -> dict:
     """
@@ -866,7 +874,28 @@ async def load_filters(context: ContextTypes.DEFAULT_TYPE):
 # Запуск приложения
 if __name__ == "__main__":
     try:
-        logger.info(f"Запуск бота на порту {PORT}...")
+        # 1. Сначала проверяем подключение к Solana
+        logger.info("🔌 Проверяем подключение к Solana...")
+        
+        # Создаем временную event loop для проверки
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # Ждем подключения максимум 10 секунд
+            loop.run_until_complete(asyncio.wait_for(test_connection(), timeout=10))
+            logger.info("✅ Подключение к Solana работает!")
+        except asyncio.TimeoutError:
+            logger.error("❌ Не удалось подключиться к Solana (таймаут)")
+            exit(1)
+        except Exception as e:
+            logger.error(f"❌ Ошибка подключения к Solana: {e}")
+            exit(1)
+        finally:
+            loop.close()
+
+        # 2. Только после успешной проверки запускаем бота
+        logger.info(f"🚀 Запускаем бота на порту {PORT}...")
         app.run(host='0.0.0.0', port=PORT)
+        
     except Exception as e:
-        logger.error(f"Ошибка при запуске приложения: {e}", exc_info=True)
+        logger.error(f"💥 Критическая ошибка при запуске: {e}")
