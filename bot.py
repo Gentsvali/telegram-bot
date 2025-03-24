@@ -359,29 +359,36 @@ async def track_pools():
         while True:
             try:
                 logger.info("Начинаем проверку пулов...")
-                
-                # Правильный формат фильтров согласно документации
-                filters = [
-                    {"dataSize": 165}  # Размер данных аккаунта
-                ]
 
-                # Получаем аккаунты с правильными параметрами
-                resp = await connection.get_program_accounts(
-                    program_id,
-                    encoding="base64",
-                    filters=filters
+                # Правильная структура запроса согласно документации
+                opts = {
+                    "encoding": "base64",
+                    "dataSlice": {
+                        "offset": 0,
+                        "length": 0
+                    },
+                    "filters": [
+                        {
+                            "dataSize": 165
+                        }
+                    ]
+                }
+
+                # Используем send вместо get_program_accounts
+                resp = await connection.send(
+                    "getProgramAccounts",
+                    [str(program_id), opts]
                 )
 
-                if hasattr(resp, 'value'):
-                    accounts = resp.value
+                if "result" in resp:
+                    accounts = resp["result"]
                     logger.info(f"Найдено {len(accounts)} пулов")
 
                     for account in accounts:
                         try:
-                            pubkey = str(account.pubkey)
+                            pubkey = account["pubkey"]
                             if pubkey not in last_checked_pools:
-                                # Получаем и декодируем данные
-                                raw_data = base64.b64decode(account.account.data[0])
+                                raw_data = base64.b64decode(account["account"]["data"][0])
                                 decoded_data = decode_pool_data(raw_data)
                                 
                                 if decoded_data:
