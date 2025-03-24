@@ -160,11 +160,28 @@ application = (
 # Инициализация подключения к Solana
 async def init_solana():
     try:
-        version = await solana_client.get_version()
-        logger.info(f"Подключено к Solana (версия: {version['solana-core']})")
+        # Проверяем базовое подключение
+        if not await solana_client.is_connected():
+            logger.error("Нет подключения к Solana RPC")
+            return False
+
+        # Получаем и проверяем версию Solana
+        version_response = await solana_client.get_version()
+        
+        # Проверяем успешность ответа
+        if version_response.is_error():
+            logger.error(f"Ошибка RPC: {version_response.error}")
+            return False
+            
+        # Правильно извлекаем данные из ответа
+        version_data = version_response.to_json()
+        solana_version = version_data['result']['solana-core']
+        
+        logger.info(f"Успешное подключение к Solana (версия: {solana_version})")
         return True
+
     except Exception as e:
-        logger.error(f"Ошибка подключения к Solana: {e}")
+        logger.error(f"Критическая ошибка подключения: {str(e)}")
         return False
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
