@@ -26,7 +26,10 @@ from solana.rpc.commitment import Confirmed
 import base58  
 from solders.pubkey import Pubkey   
 from solana.rpc.api import Client as Connection  # Используем Client вместо Connection
-from solders.rpc.filters import DataSize, Memcmp  # Импорт из solders вместо solana
+try:
+    from solana.rpc.filters import DataSize, Memcmp  # Основной вариант
+except ImportError:
+    from solders.rpc.requests import DataSize, Memcmp  # Альтернативный вариант
 
 # Для работы с JSON
 from json import JSONDecodeError
