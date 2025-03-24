@@ -343,20 +343,17 @@ async def track_pools():
     try:
         # Настраиваем подключение
         connection = Connection("https://api.mainnet-beta.solana.com", "confirmed")
-        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")  # Meteora DLMM program ID
+        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 
         while True:
             try:
                 logger.info("Начинаем проверку пулов...")
-                # Получаем все аккаунты программы
+                
+                # Получаем все аккаунты программы с правильными параметрами
                 accounts = await connection.get_program_accounts(
                     program_id,
-                    encoding="base64",  # Используем base64 вместо base58
-                    filters=[
-                        {
-                            "dataSize": 165  # Фильтр по размеру данных
-                        }
-                    ]
+                    encoding="base64",
+                    filters=[{"dataSize": 165}]
                 )
 
                 logger.info(f"Найдено {len(accounts)} пулов")
@@ -364,42 +361,42 @@ async def track_pools():
                 # Обрабатываем каждый аккаунт
                 for account in accounts:
                     try:
-                        # Проверяем, что account является объектом с нужными атрибутами
-                        if not hasattr(account, 'pubkey') or not hasattr(account, 'account'):
-                            logger.error(f"Некорректный формат аккаунта: {account}")
-                            continue
+                        # Правильное извлечение данных аккаунта
+                        if isinstance(account, dict):  # Для совместимости с разными версиями solana-py
+                            pubkey = str(account['pubkey'])
+                            account_data = account['account']
+                        else:  # Для новых версий solana-py
+                            pubkey = str(account.pubkey)
+                            account_data = account.account
 
                         pool_data = {
-                            "pubkey": str(account.pubkey),
+                            "pubkey": pubkey,
                             "account": {
-                                "data": account.account.data,  # Данные уже в base64
-                                "executable": account.account.executable,
-                                "lamports": account.account.lamports,
-                                "owner": str(account.account.owner),
-                                "rentEpoch": account.account.rentEpoch
+                                "data": account_data['data'] if isinstance(account_data, dict) else account_data.data,
+                                "executable": account_data['executable'] if isinstance(account_data, dict) else account_data.executable,
+                                "lamports": account_data['lamports'] if isinstance(account_data, dict) else account_data.lamports,
+                                "owner": str(account_data['owner'] if isinstance(account_data, dict) else account_data.owner),
                             }
                         }
 
-                        # Проверяем и отправляем уведомление, если пул новый
                         if pool_data["pubkey"] not in last_checked_pools:
                             logger.info(f"Обнаружен новый пул: {pool_data['pubkey']}")
                             await handle_pool_change(pool_data)
                             last_checked_pools.add(pool_data["pubkey"])
 
                     except Exception as e:
-                        logger.error(f"Ошибка обработки пула {account.pubkey}: {e}")
+                        logger.error(f"Ошибка обработки пула: {e}", exc_info=True)
                         continue
 
                 logger.info("Проверка пулов завершена, ожидание 5 минут...")
-                # Ждем 5 минут
                 await asyncio.sleep(300)
 
             except Exception as e:
-                logger.error(f"Ошибка получения пулов: {e}")
-                await asyncio.sleep(60)  # Ждем минуту при ошибке
+                logger.error(f"Ошибка получения пулов: {e}", exc_info=True)
+                await asyncio.sleep(60)
 
     except Exception as e:
-        logger.error(f"Критическая ошибка в track_pools: {e}")
+        logger.error(f"Критическая ошибка в track_pools: {e}", exc_info=True)
 
 def decode_pool_data(data: bytes) -> dict:
     """
