@@ -360,49 +360,45 @@ async def track_pools():
             try:
                 logger.info("Начинаем проверку пулов...")
                 
-                # Правильный формат конфигурации
-                config = {
-                    "encoding": "base64",
-                    "filters": [
-                        {
-                            "dataSize": 165
-                        }
-                    ]
-                }
-                
-                # Получаем аккаунты
+                # Получаем аккаунты программы
                 resp = await connection.get_program_accounts(
                     program_id,
-                    config
+                    encoding="base64",
+                    filters=[{"dataSize": 165}]
                 )
 
-                if isinstance(resp, dict) and "result" in resp:
-                    accounts = resp["result"]
-                    logger.info(f"Найдено {len(accounts)} пулов")
+                if hasattr(resp, 'value'):
+                    accounts = resp.value
+                else:
+                    accounts = resp.get('result', [])
 
-                    for account in accounts:
-                        try:
-                            if account["pubkey"] not in last_checked_pools:
-                                # Декодируем base64 данные
-                                raw_data = base64.b64decode(account["account"]["data"][0])
-                                
-                                # Используем вашу существующую функцию декодирования
-                                decoded_data = decode_pool_data(raw_data)
-                                
-                                if decoded_data:
-                                    pool_data = {
-                                        "pubkey": account["pubkey"],
-                                        **decoded_data
-                                    }
-                                    
-                                    await handle_pool_change(pool_data)
-                                    last_checked_pools.add(account["pubkey"])
+                logger.info(f"Найдено {len(accounts)} пулов")
+
+                for account in accounts:
+                    try:
+                        # Преобразуем pubkey в строку перед добавлением в set
+                        pubkey_str = str(account.pubkey) if hasattr(account, 'pubkey') else account['pubkey']
+                        
+                        if pubkey_str not in last_checked_pools:
+                            # Получаем данные аккаунта
+                            account_data = account.account.data[0] if hasattr(account, 'account') else account['account']['data'][0]
+                            raw_data = base64.b64decode(account_data)
                             
-                        except Exception as e:
-                            logger.error(f"Ошибка обработки пула: {e}")
+                            decoded_data = decode_pool_data(raw_data)
+                            
+                            if decoded_data:
+                                pool_data = {
+                                    "pubkey": pubkey_str,
+                                    **decoded_data
+                                }
+                                
+                                await handle_pool_change(pool_data)
+                                last_checked_pools.add(pubkey_str)
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки пула: {e}")
 
-                # Ждем 5 минут
-                await asyncio.sleep(300)
+                await asyncio.sleep(300)  # 5 минут между запросами
 
             except Exception as e:
                 logger.error(f"Ошибка получения пулов: {e}")
