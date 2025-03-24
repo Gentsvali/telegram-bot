@@ -353,42 +353,29 @@ async def test_connection():
 
 async def track_pools():
     try:
+        # Создаем подключение
         connection = Client("https://api.mainnet-beta.solana.com")
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 
         while True:
             try:
                 logger.info("Начинаем проверку пулов...")
-
-                # Правильная структура запроса согласно документации
-                opts = {
-                    "encoding": "base64",
-                    "dataSlice": {
-                        "offset": 0,
-                        "length": 0
-                    },
-                    "filters": [
-                        {
-                            "dataSize": 165
-                        }
-                    ]
-                }
-
-                # Используем send вместо get_program_accounts
-                resp = await connection.send(
-                    "getProgramAccounts",
-                    [str(program_id), opts]
+                
+                # Получаем аккаунты программы напрямую через get_program_accounts
+                accounts = await connection.get_program_accounts(
+                    program_id,
+                    encoding="base64"
                 )
 
-                if "result" in resp:
-                    accounts = resp["result"]
+                if accounts:
                     logger.info(f"Найдено {len(accounts)} пулов")
 
-                    for account in accounts:
+                    for acc in accounts:
                         try:
-                            pubkey = account["pubkey"]
+                            pubkey = str(acc.pubkey)
                             if pubkey not in last_checked_pools:
-                                raw_data = base64.b64decode(account["account"]["data"][0])
+                                # Декодируем данные
+                                raw_data = base64.b64decode(acc.account.data[0])
                                 decoded_data = decode_pool_data(raw_data)
                                 
                                 if decoded_data:
@@ -401,7 +388,7 @@ async def track_pools():
                         except Exception as e:
                             logger.error(f"Ошибка обработки пула: {e}")
 
-                await asyncio.sleep(300)
+                await asyncio.sleep(300)  # 5 минут между запросами
 
             except Exception as e:
                 logger.error(f"Ошибка получения пулов: {e}")
