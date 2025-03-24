@@ -81,7 +81,7 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com/")
 
 # Настройки Solana
 COMMITMENT = "confirmed"
