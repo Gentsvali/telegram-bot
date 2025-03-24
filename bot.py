@@ -160,13 +160,7 @@ application = (
 # Инициализация подключения к Solana
 async def init_solana():
     try:
-        # Получаем базовую информацию о ноде
-        health = await solana_client.get_health()
-        if str(health) != "ok":
-            logger.error(f"Ошибка здоровья ноды: {health}")
-            return False
-
-        # Получаем версию Solana правильным способом
+        # Проверка подключения через получение версии
         version_response = await solana_client.get_version()
         version_data = version_response.to_json()
         
