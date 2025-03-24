@@ -14,9 +14,14 @@ from quart import Quart, request
 # Загрузка переменных окружения
 from dotenv import load_dotenv
 
-# Telegram Bot API
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler
+from telegram.ext import (
+    ApplicationBuilder, 
+    CommandHandler, 
+    ContextTypes, 
+    MessageHandler,
+    filters
+)
 
 # Solana импорты - обновленные
 from solana.rpc.async_api import AsyncClient
