@@ -356,7 +356,11 @@ async def track_pools():
                         {
                             "dataSize": 165  # Фильтр по размеру данных
                         }
-                    ]
+                    ],
+                    dataSlice={
+                        "offset": 0,  # Начальное смещение
+                        "length": 165  # Длина данных
+                    }
                 )
 
                 logger.info(f"Найдено {len(accounts)} пулов")
@@ -364,6 +368,11 @@ async def track_pools():
                 # Обрабатываем каждый аккаунт
                 for account in accounts:
                     try:
+                        # Проверяем, что account является объектом с нужными атрибутами
+                        if not hasattr(account, 'pubkey') or not hasattr(account, 'account'):
+                            logger.error(f"Некорректный формат аккаунта: {account}")
+                            continue
+
                         pool_data = {
                             "pubkey": str(account.pubkey),
                             "account": {
@@ -371,6 +380,7 @@ async def track_pools():
                                 "executable": account.account.executable,
                                 "lamports": account.account.lamports,
                                 "owner": str(account.account.owner),
+                                "rentEpoch": account.account.rentEpoch
                             }
                         }
 
