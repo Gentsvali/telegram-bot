@@ -22,16 +22,17 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 import httpx
 
 # Solana импорты
-from solana_client import RpcClient
-from solana.rpc.commitment import Confirmed
+from solana.rpc.api import Client
+from solana.rpc.commitment import Confirmed 
+from solders.pubkey import Pubkey
 from solana.rpc.types import MemcmpOpts
+import base64
 
 # Для работы с JSON
 from json import JSONDecodeError
 
 # Для работы с GitHub (если нужно сохранять фильтры в репозиторий)
 import requests 
-import base64  
 
 # Настройка логгера
 logging.basicConfig(
