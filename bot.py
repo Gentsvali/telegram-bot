@@ -356,11 +356,7 @@ async def track_pools():
                         {
                             "dataSize": 165  # Фильтр по размеру данных
                         }
-                    ],
-                    dataSlice={
-                        "offset": 0,  # Начальное смещение
-                        "length": 165  # Длина данных
-                    }
+                    ]
                 )
 
                 logger.info(f"Найдено {len(accounts)} пулов")
