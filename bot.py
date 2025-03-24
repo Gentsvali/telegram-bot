@@ -338,60 +338,60 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def track_pools():
     """
-    Проверяет новые пулы каждые 5 минут
+    Проверяет новые пулы каждые 5 минут.
     """
     try:
         # Настраиваем подключение
         connection = Connection("https://api.mainnet-beta.solana.com", "confirmed")
-        program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM program ID
-        
+        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")  # Meteora DLMM program ID
+
         while True:
             try:
                 logger.info("Начинаем проверку пулов...")
                 # Получаем все аккаунты программы
                 accounts = await connection.get_program_accounts(
                     program_id,
-                    encoding="jsonParsed",
+                    encoding="base64",  # Используем base64 вместо base58
                     filters=[
                         {
-                            "dataSize": 165
+                            "dataSize": 165  # Фильтр по размеру данных
                         }
                     ]
                 )
-                
+
                 logger.info(f"Найдено {len(accounts)} пулов")
-                
+
                 # Обрабатываем каждый аккаунт
                 for account in accounts:
                     try:
                         pool_data = {
                             "pubkey": str(account.pubkey),
                             "account": {
-                                "data": account.account.data,
+                                "data": account.account.data,  # Данные уже в base64
                                 "executable": account.account.executable,
                                 "lamports": account.account.lamports,
                                 "owner": str(account.account.owner),
                             }
                         }
-                        
-                        # Проверяем и отправляем уведомление если пул новый
+
+                        # Проверяем и отправляем уведомление, если пул новый
                         if pool_data["pubkey"] not in last_checked_pools:
                             logger.info(f"Обнаружен новый пул: {pool_data['pubkey']}")
                             await handle_pool_change(pool_data)
                             last_checked_pools.add(pool_data["pubkey"])
-                            
+
                     except Exception as e:
                         logger.error(f"Ошибка обработки пула {account.pubkey}: {e}")
                         continue
-                        
+
                 logger.info("Проверка пулов завершена, ожидание 5 минут...")
                 # Ждем 5 минут
                 await asyncio.sleep(300)
-                
+
             except Exception as e:
                 logger.error(f"Ошибка получения пулов: {e}")
                 await asyncio.sleep(60)  # Ждем минуту при ошибке
-                
+
     except Exception as e:
         logger.error(f"Критическая ошибка в track_pools: {e}")
 
@@ -401,7 +401,6 @@ def decode_pool_data(data: bytes) -> dict:
     """
     try:
         # Пример декодирования данных (зависит от структуры данных пула)
-        # Здесь нужно использовать документацию Solana или Meteora
         decoded_data = {
             "mint_x": data[:32].hex(),  # Первые 32 байта — mint_x
             "mint_y": data[32:64].hex(),  # Следующие 32 байта — mint_y
@@ -593,59 +592,28 @@ def filter_pool(pool: dict) -> bool:
 
     try:
         # Получаем данные пула
-        tvl = float(pool.get("liquidity", 0))
-        if tvl <= 0:
+        decoded_data = decode_pool_data(base64.b64decode(pool["account"]["data"][0]))
+        if not decoded_data:
             return False
-
-        # Формируем метрики пула
-        pool_metrics = {
-            "bin_step": int(pool.get("bin_step", 999)),
-            "base_fee": float(pool.get("base_fee_percentage", 100)),
-            "fee_24h": float(pool.get("fees_24h", 0)),
-            "volume_1h": float(pool.get("volume", {}).get("hour_1", 0)),
-            "volume_5m": float(pool.get("volume", {}).get("min_30", 0)) * 2,
-            "dynamic_fee": float(pool.get("fee_tvl_ratio", {}).get("hour_1", 0)),
-            "tvl": tvl,
-            "is_verified": bool(pool.get("is_verified", False)),
-            "listing_time": int(pool.get("listing_time", 0)),
-            "price_change_1h": float(pool.get("price_change_1h", 0)),
-            "price_change_5m": float(pool.get("price_change_5m", 0)),
-            "fee_change_1h": float(pool.get("fee_change_1h", 0)),
-            "fee_change_5m": float(pool.get("fee_change_5m", 0)),
-        }
-
-        # Проверяем стабильную монету
-        stable_mints = {
-            "USDC": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            "SOL": "So11111111111111111111111111111111111111112",
-        }
-        stable_mint = stable_mints[current_filters["stable_coin"]]
-        is_stable_pair = (pool.get("mint_x") == stable_mint) or (pool.get("mint_y") == stable_mint)
-
-        # Рассчитываем отношение комиссии к TVL
-        fee_tvl_ratio = (pool_metrics["fee_24h"] / pool_metrics["tvl"] * 100) if pool_metrics["tvl"] > 0 else 0
 
         # Применяем фильтры
         conditions = [
-            is_stable_pair,  # Пул должен содержать стабильную монету
-            pool_metrics["bin_step"] in current_filters["bin_steps"],
-            pool_metrics["base_fee"] <= current_filters["base_fee_max"],
-            fee_tvl_ratio >= current_filters["fee_tvl_ratio_24h_min"],
-            pool_metrics["volume_1h"] >= current_filters["volume_1h_min"],
-            pool_metrics["volume_5m"] >= current_filters["volume_5m_min"],
-            pool_metrics["dynamic_fee"] >= current_filters["dynamic_fee_tvl_ratio_min"],
-            pool_metrics["tvl"] >= current_filters["min_tvl"],
-            (not current_filters["verified_only"]) or pool_metrics["is_verified"],  # Проверенные пулы
-            pool_metrics["listing_time"] >= current_filters["min_listing_time"],
-            pool_metrics["price_change_1h"] >= current_filters["price_change_1h_min"],
-            pool_metrics["price_change_5m"] >= current_filters["price_change_5m_min"],
-            pool_metrics["fee_change_1h"] >= current_filters["fee_change_1h_min"],
-            pool_metrics["fee_change_5m"] >= current_filters["fee_change_5m_min"],
+            decoded_data["bin_step"] in current_filters["bin_steps"],
+            decoded_data["base_fee"] <= current_filters["base_fee_max"],
+            decoded_data["liquidity"] >= current_filters["min_tvl"],
+            decoded_data["volume_1h"] >= current_filters["volume_1h_min"],
+            decoded_data["volume_5m"] >= current_filters["volume_5m_min"],
+            decoded_data["is_verified"] or not current_filters["verified_only"],
+            decoded_data["listing_time"] >= current_filters["min_listing_time"],
+            decoded_data["price_change_1h"] >= current_filters["price_change_1h_min"],
+            decoded_data["price_change_5m"] >= current_filters["price_change_5m_min"],
+            decoded_data["fee_change_1h"] >= current_filters["fee_change_1h_min"],
+            decoded_data["fee_change_5m"] >= current_filters["fee_change_5m_min"],
         ]
 
         # Возвращаем True, если все условия выполнены
         return all(conditions)
-    
+
     except Exception as e:
         logger.error(f"Ошибка фильтрации пула: {e}", exc_info=True)
         return False
