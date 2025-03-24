@@ -160,23 +160,21 @@ application = (
 # Инициализация подключения к Solana
 async def init_solana():
     try:
-        # Проверяем базовое подключение
-        if not await solana_client.is_connected():
-            logger.error("Нет подключения к Solana RPC")
+        # Получаем базовую информацию о ноде
+        health = await solana_client.get_health()
+        if str(health) != "ok":
+            logger.error(f"Ошибка здоровья ноды: {health}")
             return False
 
-        # Получаем и проверяем версию Solana
+        # Получаем версию Solana правильным способом
         version_response = await solana_client.get_version()
+        version_data = version_response.to_json()
         
-        # Проверяем успешность ответа
-        if version_response.is_error():
-            logger.error(f"Ошибка RPC: {version_response.error}")
+        if "error" in version_data:
+            logger.error(f"Ошибка RPC: {version_data['error']}")
             return False
             
-        # Правильно извлекаем данные из ответа
-        version_data = version_response.to_json()
         solana_version = version_data['result']['solana-core']
-        
         logger.info(f"Успешное подключение к Solana (версия: {solana_version})")
         return True
 
