@@ -22,11 +22,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 import httpx
 
 # Solana импорты
+from solana_client import RpcClient
 from solana.rpc.commitment import Confirmed
-from solana.rpc.api import Client as Connection
-from solana.rpc.api import DataSize, Memcmp  # Основной вариант
-from solders.pubkey import Pubkey
-import base58
+from solana.rpc.types import MemcmpOpts
 
 # Для работы с JSON
 from json import JSONDecodeError
@@ -357,51 +355,52 @@ async def track_pools():
         connection = Client("https://api.mainnet-beta.solana.com")
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 
-        # Правильное создание фильтров:
-        filters = [
-            DataSize(165),  # Фильтр по размеру данных
-            # Memcmp(offset=0, bytes=b"data")  # Пример memcmp-фильтра
-        ]
-
         while True:
             try:
                 logger.info("Начинаем проверку пулов...")
                 
-                # Получаем аккаунты с правильными фильтрами
                 resp = await connection.get_program_accounts(
                     program_id,
                     encoding="base64",
-                    filters=filters
+                    filters=[{"dataSize": 165}]
                 )
-                accounts = resp.value
 
+                # Добавляем обработку 429 ошибки
+                if resp.get("error", {}).get("code") == 429:
+                    logger.warning("Достигнут rate limit, ожидаем...")
+                    await asyncio.sleep(60)
+                    continue
+                
+                accounts = resp.value
                 logger.info(f"Найдено {len(accounts)} пулов")
 
                 for account in accounts:
                     try:
-                        pool_data = {
-                            "pubkey": str(account.pubkey),
-                            "account": {
-                                "data": account.account.data,
-                                "owner": str(account.account.owner),
-                                "lamports": account.account.lamports,
-                                "rent_epoch": account.account.rent_epoch,
-                                "executable": account.account.executable
-                            }
-                        }
-
-                        if pool_data["pubkey"] not in last_checked_pools:
-                            await handle_pool_change(pool_data)
-                            last_checked_pools.add(pool_data["pubkey"])
-
+                        if account.pubkey not in last_checked_pools:
+                            # Декодируем base64 данные в bytes
+                            raw_data = base64.b64decode(account.account.data[0])
+                            
+                            # Используем вашу существующую функцию декодирования
+                            decoded_data = decode_pool_data(raw_data)
+                            
+                            if decoded_data:  # Если декодирование успешно
+                                pool_data = {
+                                    "pubkey": str(account.pubkey),
+                                    **decoded_data  # Добавляем все декодированные данные
+                                }
+                                
+                                await handle_pool_change(pool_data)
+                                last_checked_pools.add(account.pubkey)
+                            
                     except Exception as e:
                         logger.error(f"Ошибка обработки пула: {e}")
 
-                await asyncio.sleep(300)
+                # Ждем 5 минут перед следующей проверкой
+                await asyncio.sleep(300)  # 300 секунд = 5 минут
 
             except Exception as e:
                 logger.error(f"Ошибка получения пулов: {e}")
-                await asyncio.sleep(60)
+                await asyncio.sleep(60)  # При ошибке ждем 1 минуту
 
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
