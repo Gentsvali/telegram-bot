@@ -465,7 +465,11 @@ async def check_connection():
 async def track_dlmm_pools():
     """Отслеживает DLMM пулы с исправленным форматом запроса"""
     try:
-        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+        # Debug-логи для проверки подключения
+        logger.debug(f"Используем RPC: {RPC_URL}")
+        logger.debug(f"Программа ID: {DLMM_PROGRAM_ID}")
+        
+        program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
         
         while True:
             try:
