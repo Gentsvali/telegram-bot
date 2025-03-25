@@ -463,7 +463,7 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """Финальная рабочая версия с правильными фильтрами"""
+    """Отслеживает DLMM пулы используя getProgramAccounts"""
     try:
         logger.debug(f"Инициализация мониторинга пулов. RPC: {RPC_URL}")
         logger.debug(f"DLMM Program ID: {DLMM_PROGRAM_ID}")
@@ -472,26 +472,30 @@ async def track_dlmm_pools():
         
         while True:
             try:
-                # 1. Формируем фильтры как обычные словари
-                filters = [
-                    {"dataSize": DLMM_CONFIG["pool_size"]},
-                    {
-                        "memcmp": {
-                            "offset": 0,  # Просто число, не объект
-                            "bytes": base58.b58encode(bytes([1])).decode()
+                # Создаем конфигурацию для запроса
+                config = {
+                    "commitment": DLMM_CONFIG["commitment"],
+                    "encoding": "base64",
+                    "filters": [
+                        {
+                            "dataSize": DLMM_CONFIG["pool_size"]
+                        },
+                        {
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": base58.b58encode(bytes([1])).decode(),
+                                "encoding": "base58"
+                            }
                         }
-                    }
-                ]
+                    ]
+                }
                 
-                # Логирование для отладки
-                logger.debug(f"Сформированные фильтры:\n{json.dumps(filters, indent=2)}")
+                logger.debug(f"Отправляем запрос с конфигурацией:\n{json.dumps(config, indent=2)}")
                 
-                # 2. Отправляем запрос
+                # Получаем аккаунты
                 accounts = await solana_client.get_program_accounts(
                     program_id,
-                    commitment=DLMM_CONFIG["commitment"],
-                    encoding="base64",
-                    filters=filters
+                    config
                 )
 
                 if not accounts:
@@ -517,15 +521,19 @@ async def track_dlmm_pools():
                             
                     except Exception as e:
                         logger.error(f"Сбой обработки пула {pubkey}: {e}")
+                        continue
 
                 await asyncio.sleep(DLMM_CONFIG["update_interval"])
 
             except Exception as e:
                 logger.error(f"Ошибка при запросе пулов: {e}")
+                if "rate limit" in str(e).lower():
+                    logger.warning("Превышен лимит запросов, ожидаем перед повторной попыткой")
+                    await asyncio.sleep(5)
                 await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
     except Exception as e:
-        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        logger.error(f"Критическая ошибка в track_dlmm_pools: {e}", exc_info=True)
 
 def decode_pool_data(data: bytes) -> dict:
     """
