@@ -463,55 +463,59 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """Отслеживает DLMM пулы используя getProgramAccounts"""
+    """Рабочая версия с низкоуровневым RPC-вызовом"""
     try:
-        logger.debug(f"Инициализация мониторинга пулов. RPC: {RPC_URL}")
-        logger.debug(f"DLMM Program ID: {DLMM_PROGRAM_ID}")
-
         program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
         
         while True:
             try:
-                # Создаем конфигурацию для запроса
-                config = {
-                    "commitment": DLMM_CONFIG["commitment"],
-                    "encoding": "base64",
-                    "filters": [
+                # 1. Формируем raw RPC-запрос
+                request = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getProgramAccounts",
+                    "params": [
+                        str(program_id),
                         {
-                            "dataSize": DLMM_CONFIG["pool_size"]
-                        },
-                        {
-                            "memcmp": {
-                                "offset": 0,
-                                "bytes": base58.b58encode(bytes([1])).decode(),
-                                "encoding": "base58"
-                            }
+                            "encoding": "base64",
+                            "filters": [
+                                {"dataSize": DLMM_CONFIG["pool_size"]},
+                                {
+                                    "memcmp": {
+                                        "offset": 0,
+                                        "bytes": base58.b58encode(bytes([1])).decode()
+                                    }
+                                }
+                            ]
                         }
                     ]
                 }
                 
-                logger.debug(f"Отправляем запрос с конфигурацией:\n{json.dumps(config, indent=2)}")
+                # 2. Отправляем запрос вручную
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(RPC_URL, json=request)
+                    result = response.json()
                 
-                # Получаем аккаунты
-                accounts = await solana_client.get_program_accounts(
-                    program_id,
-                    config
-                )
-
+                # 3. Обрабатываем ответ
+                if "error" in result:
+                    raise Exception(f"RPC error: {result['error']}")
+                
+                accounts = result.get("result", [])
+                
                 if not accounts:
-                    logger.warning("Не найдено активных пулов")
+                    logger.warning("No pools found")
                     await asyncio.sleep(DLMM_CONFIG["update_interval"])
                     continue
 
-                logger.info(f"Получено {len(accounts)} пулов для анализа")
+                logger.info(f"Processing {len(accounts)} pools")
                 
                 for acc in accounts:
                     try:
-                        pubkey = str(acc.pubkey)
+                        pubkey = acc["pubkey"]
                         if pubkey in pool_state.last_checked_pools:
                             continue
                             
-                        pool_data = decode_pool_data(base64.b64decode(acc.account.data))
+                        pool_data = decode_pool_data(base64.b64decode(acc["account"]["data"][0]))
                         if pool_data and filter_pool(pool_data):
                             await handle_pool_change({
                                 "address": pubkey,
@@ -520,20 +524,16 @@ async def track_dlmm_pools():
                             pool_state.last_checked_pools.add(pubkey)
                             
                     except Exception as e:
-                        logger.error(f"Сбой обработки пула {pubkey}: {e}")
-                        continue
+                        logger.error(f"Pool processing error: {e}")
 
                 await asyncio.sleep(DLMM_CONFIG["update_interval"])
 
             except Exception as e:
-                logger.error(f"Ошибка при запросе пулов: {e}")
-                if "rate limit" in str(e).lower():
-                    logger.warning("Превышен лимит запросов, ожидаем перед повторной попыткой")
-                    await asyncio.sleep(5)
+                logger.error(f"Request error: {e}")
                 await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
     except Exception as e:
-        logger.error(f"Критическая ошибка в track_dlmm_pools: {e}", exc_info=True)
+        logger.error(f"Critical error: {e}")
 
 def decode_pool_data(data: bytes) -> dict:
     """
