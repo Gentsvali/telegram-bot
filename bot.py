@@ -463,32 +463,32 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """Отслеживает DLMM пулы с исправленным форматом запроса"""
+    """Исправленная версия отслеживания пулов"""
     try:
-        # Debug-логи для проверки подключения
-        logger.debug(f"Используем RPC: {RPC_URL}")
-        logger.debug(f"Программа ID: {DLMM_PROGRAM_ID}")
-        
+        logger.debug(f"Подключаемся к RPC: {RPC_URL}")
+        logger.debug(f"Используем Program ID: {DLMM_PROGRAM_ID}")
+        logger.debug(f"Тип filters: {type(filters[0])}")
+        logger.debug(f"Пример фильтра: {filters[0]}")
+
         program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
         
         while True:
             try:
-                logger.info("Проверка DLMM пулов...")
+                # 1. Формируем фильтры в правильном формате
+                filters = [
+                    MemcmpOpts(
+                        offset=0,  # Явно указываем offset как число
+                        bytes=base58.b58encode(bytes([1])).decode()
+                    ),
+                    {"dataSize": DLMM_CONFIG["pool_size"]}
+                ]
                 
-                # Исправленный формат запроса
+                # 2. Делаем запрос с явным указанием типа фильтров
                 accounts = await solana_client.get_program_accounts(
                     program_id,
                     commitment=DLMM_CONFIG["commitment"],
                     encoding="base64",
-                    filters=[
-                        {"dataSize": DLMM_CONFIG["pool_size"]},
-                        {
-                            "memcmp": {
-                                "offset": 0,
-                                "bytes": base58.b58encode(bytes([1])).decode()
-                            }
-                        }
-                    ]
+                    filters=filters
                 )
 
                 if not accounts:
@@ -496,7 +496,7 @@ async def track_dlmm_pools():
                     await asyncio.sleep(DLMM_CONFIG["update_interval"])
                     continue
 
-                logger.info(f"Найдено {len(accounts)} пулов")
+                logger.info(f"Обработка {len(accounts)} пулов")
                 
                 for acc in accounts:
                     try:
@@ -504,6 +504,7 @@ async def track_dlmm_pools():
                         if pubkey in pool_state.last_checked_pools:
                             continue
                             
+                        # 3. Исправленное декодирование данных
                         pool_data = decode_pool_data(base64.b64decode(acc.account.data))
                         if pool_data and filter_pool(pool_data):
                             await handle_pool_change({
@@ -513,12 +514,12 @@ async def track_dlmm_pools():
                             pool_state.last_checked_pools.add(pubkey)
                             
                     except Exception as e:
-                        logger.error(f"Ошибка обработки пула: {e}")
+                        logger.error(f"Ошибка обработки пула {pubkey}: {e}")
 
                 await asyncio.sleep(DLMM_CONFIG["update_interval"])
 
             except Exception as e:
-                logger.error(f"Ошибка: {e}")
+                logger.error(f"Ошибка получения пулов: {e}")
                 await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
     except Exception as e:
