@@ -7,3 +7,44 @@
 {
     "disable_filters": false
 }
+
+
+
+1. Показать все установленные Python-пакеты:
+
+bash
+Copy
+pip list
+или с более подробной информацией:
+
+bash
+Copy
+pip freeze
+2. Для проверки конкретных библиотек Solana:
+
+bash
+Copy
+pip show solders solana-py anchorpy
+3. Проверить совместимость версий (для Linux/Mac/WSL):
+
+bash
+Copy
+pip check
+Эта команда выявит конфликты между пакетами.
+
+4. Для генерации отчета о зависимостях (удобно для анализа):
+
+bash
+Copy
+pipdeptree
+Если pipdeptree не установлен:
+
+bash
+Copy
+pip install pipdeptree
+pipdeptree
+5. Проверить конкретно ваши ключевые зависимости:
+
+bash
+Copy
+python -c "import solders, solana.rpc; print(f'Solders: {solders.__version__}\nSolana-py: {solana.rpc.__version__}')"
