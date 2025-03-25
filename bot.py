@@ -145,7 +145,11 @@ class PoolState:
 pool_state = PoolState()
 
 # Инициализация Solana клиента
-solana_client = AsyncClient(RPC_URL, commitment=DLMM_CONFIG["commitment"])
+solana_client = AsyncClient(
+    RPC_URL,
+    commitment=DLMM_CONFIG["commitment"],
+    timeout=30
+)
 
 # Инициализация приложения Telegram
 application = (
@@ -459,74 +463,62 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """
-    Отслеживает DLMM пулы используя getProgramAccounts
-    """
+    """Отслеживает DLMM пулы с исправленным форматом запроса"""
     try:
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-
+        
         while True:
             try:
-                logger.info("Начинаем проверку DLMM пулов...")
+                logger.info("Проверка DLMM пулов...")
                 
-                # Получаем аккаунты с фильтрами для оптимизации
+                # Исправленный формат запроса
                 accounts = await solana_client.get_program_accounts(
                     program_id,
                     commitment=DLMM_CONFIG["commitment"],
                     encoding="base64",
                     filters=[
-                        {
-                            "dataSize": DLMM_CONFIG["pool_size"]  # Размер данных пула
-                        },
+                        {"dataSize": DLMM_CONFIG["pool_size"]},
                         {
                             "memcmp": {
                                 "offset": 0,
-                                "bytes": base58.b58encode(bytes([1])).decode()  # Проверка инициализации
+                                "bytes": base58.b58encode(bytes([1])).decode()
                             }
                         }
                     ]
                 )
 
-                if accounts:
-                    logger.info(f"Найдено {len(accounts)} DLMM пулов")
+                if not accounts:
+                    logger.warning("Пулы не найдены")
+                    await asyncio.sleep(DLMM_CONFIG["update_interval"])
+                    continue
 
-                    for acc in accounts:
-                        try:
-                            pubkey = str(acc.pubkey)
-                            current_time = int(time.time())
-                            
-                            # Проверяем, не обрабатывали ли мы этот пул недавно
-                            last_check = pool_state.last_update.get(pubkey, 0)
-                            if current_time - last_check < DLMM_CONFIG["update_interval"]:
-                                continue
-
-                            # Декодируем и обрабатываем данные пула
-                            pool_data = decode_pool_data(base64.b64decode(acc.account.data[0]))
-                            if pool_data and filter_pool(pool_data):
-                                await handle_pool_change({
-                                    "address": pubkey,
-                                    **pool_data
-                                })
-                                
-                                # Обновляем время последней проверки
-                                pool_state.last_update[pubkey] = current_time
-                                pool_state.last_checked_pools.add(pubkey)
-
-                        except Exception as e:
-                            logger.error(f"Ошибка обработки пула {pubkey}: {e}")
+                logger.info(f"Найдено {len(accounts)} пулов")
+                
+                for acc in accounts:
+                    try:
+                        pubkey = str(acc.pubkey)
+                        if pubkey in pool_state.last_checked_pools:
                             continue
+                            
+                        pool_data = decode_pool_data(base64.b64decode(acc.account.data))
+                        if pool_data and filter_pool(pool_data):
+                            await handle_pool_change({
+                                "address": pubkey,
+                                **pool_data
+                            })
+                            pool_state.last_checked_pools.add(pubkey)
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки пула: {e}")
 
                 await asyncio.sleep(DLMM_CONFIG["update_interval"])
 
             except Exception as e:
-                logger.error(f"Ошибка получения пулов: {e}")
+                logger.error(f"Ошибка: {e}")
                 await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
     except Exception as e:
-        logger.error(f"Критическая ошибка в track_dlmm_pools: {e}")
-        # Пробуем переподключиться
-        if await handle_solana_connection_error():
-            asyncio.create_task(track_dlmm_pools())
+        logger.error(f"Критическая ошибка: {e}")
 
 def decode_pool_data(data: bytes) -> dict:
     """
