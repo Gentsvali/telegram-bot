@@ -467,21 +467,24 @@ async def track_dlmm_pools():
     try:
         logger.debug(f"Подключаемся к RPC: {RPC_URL}")
         logger.debug(f"Используем Program ID: {DLMM_PROGRAM_ID}")
-        logger.debug(f"Тип filters: {type(filters[0])}")
-        logger.debug(f"Пример фильтра: {filters[0]}")
 
         program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
         
         while True:
             try:
                 # 1. Формируем фильтры в правильном формате
+                memcmp_filter = MemcmpOpts(
+                    offset=0,  # Явно указываем offset как число
+                    bytes=base58.b58encode(bytes([1])).decode()
+                )
+                
                 filters = [
-                    MemcmpOpts(
-                        offset=0,  # Явно указываем offset как число
-                        bytes=base58.b58encode(bytes([1])).decode()
-                    ),
-                    {"dataSize": DLMM_CONFIG["pool_size"]}
+                    {"dataSize": DLMM_CONFIG["pool_size"]},
+                    {"memcmp": memcmp_filter.to_dict()}  # Явное преобразование в dict
                 ]
+                
+                logger.debug(f"Тип filters[0]: {type(filters[0])}")
+                logger.debug(f"Пример фильтра: {filters[0]}")
                 
                 # 2. Делаем запрос с явным указанием типа фильтров
                 accounts = await solana_client.get_program_accounts(
