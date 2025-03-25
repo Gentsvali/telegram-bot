@@ -157,6 +157,27 @@ application = (
     .build()
 )
 
+async def load_filters(app=None):
+    """Загружает фильтры из файла или использует значения по умолчанию"""
+    global current_filters
+    try:
+        # Проверяем существует ли файл
+        if os.path.exists(FILE_PATH):
+            with open(FILE_PATH, 'r') as f:
+                loaded = json.load(f)
+                # Обновляем только существующие ключи
+                for key in DEFAULT_FILTERS:
+                    if key in loaded:
+                        current_filters[key] = loaded[key]
+            logger.info("Фильтры загружены из файла")
+        else:
+            current_filters = DEFAULT_FILTERS.copy()
+            logger.info("Файл фильтров не найден, используются значения по умолчанию")
+    except Exception as e:
+        current_filters = DEFAULT_FILTERS.copy()
+        logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
+        logger.info(f"Текущие фильтры: {current_filters}")
+
 # Инициализация подключения к Solana
 async def init_solana():
     try:
