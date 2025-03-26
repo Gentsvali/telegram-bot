@@ -207,26 +207,32 @@ async def load_filters(app=None):
 
 # Инициализация подключения к Solana
 async def init_solana():
+    """Инициализация подключения к Solana RPC"""
     try:
+        # Получаем версию ноды
         version_response = await solana_client.get_version()
-        version_dict = version_response.to_json()  # Это уже возвращает строку JSON
-        version_data = json.loads(version_dict)  # Парсим строку в словарь
         
-        if not isinstance(version_data.get("result"), dict):
-            logger.error("Некорректная структура ответа RPC")
-            return False
-            
+        # Обрабатываем разные форматы ответов
+        if hasattr(version_response, 'to_json'):
+            version_data = json.loads(version_response.to_json())
+        elif isinstance(version_response, dict):
+            version_data = version_response
+        else:
+            version_data = version_response.__dict__
+        
+        # Извлекаем версию Solana
+        result = version_data.get('result', {})
         solana_version = (
-            version_data["result"].get("solana-core") 
-            or version_data["result"].get("version")
+            result.get('solana-core') 
+            or result.get('version') 
             or "unknown"
         )
         
         logger.info(f"✅ Успешно подключено к Solana ноде v{solana_version}")
         return True
-
+        
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка подключения: {str(e)}")
+        logger.error(f"❌ Ошибка подключения к Solana: {str(e)}")
         return False
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
