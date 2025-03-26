@@ -207,24 +207,22 @@ async def load_filters(app=None):
 
 # Инициализация подключения к Solana
 async def init_solana():
-    """Инициализация подключения к Solana RPC"""
+    """Инициализация подключения к Solana с улучшенной обработкой ответов"""
     try:
-        # Получаем версию ноды
         version_response = await solana_client.get_version()
         
-        # Обрабатываем разные форматы ответов
+        # Универсальная обработка разных форматов ответа
         if hasattr(version_response, 'to_json'):
             version_data = json.loads(version_response.to_json())
-        elif isinstance(version_response, dict):
-            version_data = version_response
+        elif hasattr(version_response, 'result'):
+            version_data = version_response.result
         else:
-            version_data = version_response.__dict__
-        
+            version_data = version_response
+
         # Извлекаем версию Solana
-        result = version_data.get('result', {})
         solana_version = (
-            result.get('solana-core') 
-            or result.get('version') 
+            version_data.get('solana-core') 
+            or version_data.get('version')
             or "unknown"
         )
         
@@ -1247,6 +1245,11 @@ async def healthcheck():
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }, 500
+
+@app.route('/test-solana')
+async def test_solana():
+    connected = await init_solana()
+    return {"solana_connected": connected}, 200
 
 # Главная страница с расширенной информацией
 @app.route('/')
