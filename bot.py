@@ -117,7 +117,8 @@ RPC_PROVIDERS = [
     "https://rpc.ankr.com/solana",
     "https://ssc-dao.genesysgo.net",
     "https://api.rpcpool.com",
-    "https://solana-mainnet.rpc.extrnode.com"
+    "https://solana-mainnet.rpc.extrnode.com",
+    "https://api.mainnet-beta.solana.com"  # Оставляем на крайний случай
 ]
 
 # Проверка корректности фильтров
@@ -505,12 +506,14 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """Улучшенный мониторинг с устойчивым переключением RPC"""
+    """Улучшенный мониторинг пулов с полной обработкой ошибок RPC"""
     retry_count = 0
-    max_retries = 3
+    MAX_RETRIES = 5
+    RETRY_DELAY = 30  # секунд
     
     while True:
         try:
+            # 1. Подготовка параметров запроса
             program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
             filters = [
                 MemcmpOpts(
@@ -519,78 +522,111 @@ async def track_dlmm_pools():
                 )
             ]
             
+            # 2. Попытка запроса
             try:
                 response = await solana_client.get_program_accounts(
                     program_id,
                     encoding="base64",
                     filters=filters,
-                    commitment="confirmed"
+                    commitment="confirmed",
+                    timeout=30  # Увеличиваем таймаут
                 )
             except Exception as rpc_error:
-                if "410 Gone" in str(rpc_error) or "failed" in str(rpc_error).lower():
-                    logger.warning(f"RPC ошибка: {str(rpc_error)}")
-                    if retry_count >= max_retries:
-                        logger.error("Достигнут лимит попыток, пауза 5 минут")
-                        await asyncio.sleep(300)
-                        retry_count = 0
-                        continue
-                        
-                    if await switch_rpc_provider():
-                        retry_count = 0
-                    else:
-                        retry_count += 1
-                    await asyncio.sleep(10)
+                error_msg = str(rpc_error)
+                
+                # 3. Обработка специфических ошибок
+                if "410 Gone" in error_msg:
+                    logger.warning("RPC endpoint устарел, переключаемся...")
+                    await switch_rpc_provider()
+                    await asyncio.sleep(RETRY_DELAY)
                     continue
-                raise rpc_error
+                    
+                elif "timed out" in error_msg:
+                    logger.warning(f"Таймаут запроса, попытка {retry_count+1}/{MAX_RETRIES}")
+                    retry_count += 1
+                    if retry_count >= MAX_RETRIES:
+                        await switch_rpc_provider()
+                        retry_count = 0
+                    await asyncio.sleep(RETRY_DELAY * retry_count)
+                    continue
+                    
+                else:
+                    logger.error(f"Неизвестная RPC ошибка: {error_msg}")
+                    raise rpc_error
 
-            # Сброс счетчика при успехе
+            # 4. Сброс счетчика при успехе
             retry_count = 0
             
+            # 5. Обработка ответа
             if not hasattr(response, 'value'):
                 logger.error("Некорректный формат ответа RPC")
+                await asyncio.sleep(RETRY_DELAY)
                 continue
                 
-            # Обработка пулов...
+            # 6. Парсинг данных пулов
+            valid_pools = 0
             for account in response.value:
                 try:
                     if not hasattr(account, 'account'):
                         continue
+                        
                     data = account.account.data
                     if isinstance(data, str):
                         decoded = base64.b64decode(data)
                         await handle_pool_data(decoded)
+                        valid_pools += 1
+                        
                 except Exception as e:
                     logger.error(f"Ошибка обработки аккаунта: {e}")
             
+            logger.info(f"Обработано пулов: {valid_pools}")
+            
+            # 7. Ожидание следующего цикла
             await asyncio.sleep(DLMM_CONFIG["update_interval"])
             
+        except SolanaRpcException as rpc_exc:
+            logger.error(f"Критическая RPC ошибка: {str(rpc_exc)}")
+            await switch_rpc_provider()
+            await asyncio.sleep(RETRY_DELAY * 2)
+            
         except Exception as e:
-            logger.error(f"Критическая ошибка: {str(e)}", exc_info=True)
-            await asyncio.sleep(min(60 * retry_count, 300))  # Экспоненциальная задержка
-            retry_count = min(retry_count + 1, max_retries)
+            logger.error(f"Неожиданная ошибка: {str(e)}", exc_info=True)
+            await asyncio.sleep(RETRY_DELAY * 3)
 
 current_rpc_index = 0
 
 async def switch_rpc_provider():
-    """Переключение на рабочий RPC эндпоинт"""
+    """Улучшенное переключение RPC с проверкой работоспособности"""
     global current_rpc_index, solana_client
     
-    original_index = current_rpc_index
-    for i in range(len(RPC_PROVIDERS)):
+    original_url = str(solana_client._provider.endpoint_uri)
+    
+    for attempt in range(len(RPC_PROVIDERS)):
         current_rpc_index = (current_rpc_index + 1) % len(RPC_PROVIDERS)
         new_url = RPC_PROVIDERS[current_rpc_index]
         
-        try:
-            # Тестируем новый эндпоинт
-            test_client = AsyncClient(new_url, timeout=10)
-            await test_client.get_epoch_info()
-            await test_client.close()
+        # Пропускаем текущий URL если он не первый
+        if attempt > 0 and new_url == original_url:
+            continue
             
+        try:
+            # Тестируем новый endpoint
+            test_client = AsyncClient(
+                new_url,
+                timeout=15,
+                commitment="confirmed"
+            )
+            
+            # Простой запрос для проверки
+            health = await test_client.get_health()
+            if not (hasattr(health, 'result') or hasattr(health, 'value')):
+                raise ConnectionError("Invalid RPC response")
+                
             # Создаем постоянного клиента
             new_client = AsyncClient(
                 new_url,
                 timeout=30,
-                commitment=DLMM_CONFIG["commitment"]
+                commitment="confirmed"
             )
             
             # Закрываем старое подключение
@@ -602,10 +638,10 @@ async def switch_rpc_provider():
             
         except Exception as e:
             logger.warning(f"RPC {new_url} недоступен: {str(e)}")
+            await asyncio.sleep(5)
             continue
     
     logger.error("Все RPC провайдеры недоступны!")
-    current_rpc_index = original_index
     return False
 
 def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
