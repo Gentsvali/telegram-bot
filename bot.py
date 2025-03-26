@@ -83,7 +83,7 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+RPC_URL = os.getenv("RPC_URL", "https://rpc.ankr.com/solana")
 
 # Настройки Solana
 COMMITMENT = "confirmed"
@@ -155,9 +155,17 @@ class PoolState:
 pool_state = PoolState()
 
 # Инициализация Solana клиента
+RPC_ENDPOINTS = [
+    os.getenv("RPC_URL"),
+    os.getenv("BACKUP_RPC_1"),
+    os.getenv("BACKUP_RPC_2"),
+    "https://solana-mainnet.rpc.extrnode.com"  # Дополнительный бесплатный
+]
+
+current_rpc_index = 0
 solana_client = AsyncClient(
-    RPC_URL,
-    commitment="confirmed",  # Простая строка вместо объекта
+    RPC_ENDPOINTS[current_rpc_index],
+    commitment="confirmed",
     timeout=30
 )
 
@@ -583,45 +591,24 @@ async def track_dlmm_pools():
             logger.error(f"Неожиданная ошибка: {str(e)}", exc_info=True)
             await asyncio.sleep(RETRY_DELAY * 2)
 
-current_rpc_index = 0
-
 async def switch_rpc_provider():
-    """Переключение RPC с проверкой доступности"""
     global current_rpc_index, solana_client
     
-    original_index = current_rpc_index
-    
-    for i in range(len(RPC_PROVIDERS)):
-        current_rpc_index = (current_rpc_index + 1) % len(RPC_PROVIDERS)
-        new_url = RPC_PROVIDERS[current_rpc_index]
+    for _ in range(len(RPC_ENDPOINTS)):
+        current_rpc_index = (current_rpc_index + 1) % len(RPC_ENDPOINTS)
+        new_url = RPC_ENDPOINTS[current_rpc_index]
         
         try:
-            # Проверяем подключение
-            async with AsyncClient(new_url, timeout=15) as test_client:
-                health = await test_client.get_health()
-                if not (hasattr(health, 'result') or hasattr(health, 'value')):
-                    continue
-                    
-            # Создаем нового клиента
-            new_client = AsyncClient(
-                new_url,
-                timeout=30,
-                commitment="confirmed"
-            )
-            
-            # Закрываем старое подключение
+            new_client = AsyncClient(new_url, timeout=10)
+            await new_client.get_epoch_info()  # Проверка подключения
             await solana_client.close()
             solana_client = new_client
-            
-            logger.info(f"Успешно переключено на: {new_url}")
+            logger.info(f"Переключено на RPC: {new_url}")
             return True
-            
         except Exception as e:
             logger.warning(f"RPC {new_url} недоступен: {str(e)}")
-            continue
     
-    current_rpc_index = original_index
-    logger.error("Все RPC недоступны!")
+    logger.error("Все RPC эндпоинты недоступны!")
     return False
 
 def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
