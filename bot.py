@@ -497,32 +497,55 @@ async def check_connection():
         logger.error(f"Ошибка подключения к Solana: {e}")
         return False
 
-from solana.rpc.core import RPCException  # Добавьте этот импорт
-
 async def track_dlmm_pools():
     program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
     
     while True:
         try:
+            # Правильные фильтры (все элементы должны быть одного типа)
             filters = [
-                {"dataSize": DLMM_CONFIG["pool_size"]},
-                MemcmpOpts(  # Используем специальный объект вместо словаря
+                MemcmpOpts(
+                    offset=0,
+                    bytes=base58.b58encode(bytes([1])).decode()
+                ),
+                {"dataSize": DLMM_CONFIG["pool_size"]}  # Этот фильтр может вызывать проблемы
+            ]
+            
+            # Альтернативный вариант (рекомендуется):
+            filters = [
+                MemcmpOpts(
                     offset=0,
                     bytes=base58.b58encode(bytes([1])).decode()
                 )
             ]
             
+            # Явное указание размера данных через параметр
             response = await solana_client.get_program_accounts(
                 program_id,
                 encoding="base64",
+                data_size=DLMM_CONFIG["pool_size"],  # Размер через отдельный параметр
                 filters=filters,
                 commitment="confirmed"
             )
             
-            # Обработка ответа...
+            # Обработка ответа
+            if not response.value:
+                logger.warning("Получен пустой ответ от RPC")
+                continue
+                
+            for account in response.value:
+                try:
+                    await process_pool_account(account)
+                except Exception as e:
+                    logger.error(f"Ошибка обработки аккаунта: {e}")
             
+            await asyncio.sleep(DLMM_CONFIG["update_interval"])
+            
+        except RPCException as e:
+            logger.error(f"RPC Error: {e}")
+            await switch_rpc_provider()
         except Exception as e:
-            logger.error(f"Ошибка: {e}")
+            logger.error(f"Неожиданная ошибка: {e}")
             await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
 RPC_PROVIDERS = [
