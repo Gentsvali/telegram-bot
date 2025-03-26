@@ -114,10 +114,10 @@ DLMM_CONFIG = {
 }
 
 RPC_PROVIDERS = [
-    "https://rpc.ankr.com/solana",          # Бесплатный (лимит запросов)
-    "https://ssc-dao.genesysgo.net",       # Бесплатный (GenesysGo)
-    "https://api.mainnet-beta.solana.com",  # Публичный (часто перегружен)
-    "https://solana-api.projectserum.com"   # Альтернативный публичный
+    "https://rpc.ankr.com/solana",
+    "https://ssc-dao.genesysgo.net",
+    "https://api.rpcpool.com",
+    "https://solana-mainnet.rpc.extrnode.com"
 ]
 
 # Проверка корректности фильтров
@@ -505,7 +505,10 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """Мониторинг DLMM пулов с автоматическим переключением RPC"""
+    """Улучшенный мониторинг с устойчивым переключением RPC"""
+    retry_count = 0
+    max_retries = 3
+    
     while True:
         try:
             program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
@@ -524,16 +527,25 @@ async def track_dlmm_pools():
                     commitment="confirmed"
                 )
             except Exception as rpc_error:
-                if "410 Gone" in str(rpc_error):
-                    logger.warning("RPC endpoint недоступен, переключаемся...")
-                    if not await switch_rpc_provider():
-                        logger.error("Не удалось переключить RPC, пауза 60 сек")
-                        await asyncio.sleep(60)
+                if "410 Gone" in str(rpc_error) or "failed" in str(rpc_error).lower():
+                    logger.warning(f"RPC ошибка: {str(rpc_error)}")
+                    if retry_count >= max_retries:
+                        logger.error("Достигнут лимит попыток, пауза 5 минут")
+                        await asyncio.sleep(300)
+                        retry_count = 0
                         continue
+                        
+                    if await switch_rpc_provider():
+                        retry_count = 0
                     else:
-                        continue
+                        retry_count += 1
+                    await asyncio.sleep(10)
+                    continue
                 raise rpc_error
 
+            # Сброс счетчика при успехе
+            retry_count = 0
+            
             if not hasattr(response, 'value'):
                 logger.error("Некорректный формат ответа RPC")
                 continue
@@ -553,8 +565,9 @@ async def track_dlmm_pools():
             await asyncio.sleep(DLMM_CONFIG["update_interval"])
             
         except Exception as e:
-            logger.error(f"Критическая ошибка мониторинга: {str(e)}", exc_info=True)
-            await asyncio.sleep(DLMM_CONFIG["retry_delay"])
+            logger.error(f"Критическая ошибка: {str(e)}", exc_info=True)
+            await asyncio.sleep(min(60 * retry_count, 300))  # Экспоненциальная задержка
+            retry_count = min(retry_count + 1, max_retries)
 
 current_rpc_index = 0
 
