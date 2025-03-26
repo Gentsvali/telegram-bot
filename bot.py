@@ -476,43 +476,45 @@ async def check_connection():
         logger.error(f"Ошибка подключения к Solana: {e}")
         return False
 
+from solana.rpc.core import RPCException  # Добавьте этот импорт
+
 async def track_dlmm_pools():
-    try:
-        program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
-        
-        while True:
-            try:
-                # Формируем современный запрос
-                params = {
-                    "encoding": "base64",
-                    "dataSlice": {
-                        "offset": 0,
-                        "length": DLMM_CONFIG["pool_size"]
-                    },
-                    "filters": [
-                        {
-                            "memcmp": {
-                                "offset": 0,
-                                "bytes": base58.b58encode(bytes([1])).decode()
-                            }
+    program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
+    
+    while True:
+        try:
+            # Формируем современный запрос
+            params = {
+                "encoding": "base64",
+                "dataSlice": {
+                    "offset": 0,
+                    "length": DLMM_CONFIG["pool_size"]
+                },
+                "filters": [
+                    {
+                        "memcmp": {
+                            "offset": 0,
+                            "bytes": base58.b58encode(bytes([1])).decode()
                         }
-                    ]
-                }
-                
-                response = await solana_client._provider.make_request(
-                    "getProgramAccounts",
-                    str(program_id),
-                    params
-                )
-                
-                accounts = response["result"]
-                # ... обработка аккаунтов ...
-                
-    except RPCException as e:
-        logger.error(f"RPC Error: {e}")
-        await switch_rpc_provider()  # Реализуйте переключение провайдеров
-    except Exception as e:
-        logger.error(f"Общая ошибка: {e}")
+                    }
+                ]
+            }
+            
+            response = await solana_client._provider.make_request(
+                "getProgramAccounts",
+                str(program_id),
+                params
+            )
+            
+            accounts = response["result"]
+            # ... обработка аккаунтов ...
+            
+        except RPCException as e:  # Исправлено название исключения
+            logger.error(f"RPC Error: {e}")
+            await switch_rpc_provider()
+        except Exception as e:
+            logger.error(f"Общая ошибка: {e}")
+            await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
 RPC_PROVIDERS = [
     "https://api.mainnet.rpcpool.com",
@@ -523,10 +525,24 @@ RPC_PROVIDERS = [
 current_rpc_index = 0
 
 async def switch_rpc_provider():
+    """Переключение RPC провайдера с проверкой доступности"""
     global current_rpc_index, solana_client
-    current_rpc_index = (current_rpc_index + 1) % len(RPC_PROVIDERS)
-    solana_client = AsyncClient(RPC_PROVIDERS[current_rpc_index])
-    logger.info(f"Переключились на RPC: {RPC_PROVIDERS[current_rpc_index]}")
+    
+    original_index = current_rpc_index
+    while True:
+        current_rpc_index = (current_rpc_index + 1) % len(RPC_PROVIDERS)
+        if current_rpc_index == original_index:
+            logger.error("Все RPC недоступны!")
+            return False
+            
+        try:
+            new_client = AsyncClient(RPC_PROVIDERS[current_rpc_index])
+            await new_client.get_version()
+            solana_client = new_client
+            logger.info(f"Успешное переключение на: {RPC_PROVIDERS[current_rpc_index]}")
+            return True
+        except Exception as e:
+            logger.warning(f"RPC {RPC_PROVIDERS[current_rpc_index]} недоступен: {e}")
 
 def decode_pool_data(data: bytes) -> dict:
     """
