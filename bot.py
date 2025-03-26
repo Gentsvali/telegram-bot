@@ -502,14 +502,15 @@ async def track_dlmm_pools():
     
     while True:
         try:
+            # 1. Создаём фильтры (ВАЖНО: только MemcmpOpts или только dict)
             filters = [
-                {"dataSize": DLMM_CONFIG["pool_size"]},  # Размер здесь!
-                MemcmpOpts(
+                MemcmpOpts(  # ТОЛЬКО такой формат
                     offset=0,
                     bytes=base58.b58encode(bytes([1])).decode()
                 )
             ]
             
+            # 2. Делаем запрос (убираем data_size)
             response = await solana_client.get_program_accounts(
                 program_id,
                 encoding="base64",
@@ -517,17 +518,24 @@ async def track_dlmm_pools():
                 commitment="confirmed"
             )
             
-            if not response.value:
-                logger.warning("Пустой ответ от RPC")
-                await asyncio.sleep(DLMM_CONFIG["retry_delay"])
+            # 3. Обработка ответа
+            if not hasattr(response, 'value'):
+                logger.error("Некорректный формат ответа RPC")
                 continue
                 
             for account in response.value:
                 try:
-                    # Ваша логика обработки аккаунта
-                    await process_pool_account(account)
+                    # 4. Проверяем структуру аккаунта
+                    if not hasattr(account, 'account'):
+                        continue
+                        
+                    data = account.account.data
+                    if isinstance(data, str):
+                        decoded = base64.b64decode(data)
+                        await handle_pool_data(decoded)
+                        
                 except Exception as e:
-                    logger.error(f"Ошибка аккаунта: {e}")
+                    logger.error(f"Ошибка обработки аккаунта: {e}")
             
             await asyncio.sleep(DLMM_CONFIG["update_interval"])
             
@@ -579,6 +587,7 @@ async def switch_rpc_provider():
             
     logger.error("Все RPC провайдеры недоступны!")
     return False
+
 def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
     """Улучшенная версия с сохранением вашей логики"""
     try:
@@ -624,7 +633,7 @@ def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
         logger.error(f"Ошибка декодирования данных пула: {e}", exc_info=True)
         return {}
 
-async def handle_pool_change(pool_data: dict):
+async def handle_pool_change(pool_data: bytes):
     """Обработка изменений пула с проверкой структуры данных"""
     required_fields = [
         'address', 'mint_x', 'mint_y', 'liquidity',
