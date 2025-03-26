@@ -27,6 +27,7 @@ from telegram.ext import (
 # Solana импорты - обновленные                                                          from solana.rpc.commitment import Confirmed
 from solana.rpc.types import MemcmpOpts
 from solana.rpc.core import RPCException
+from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 import base58
 import base64
