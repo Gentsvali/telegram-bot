@@ -24,7 +24,7 @@ from telegram.ext import (
     filters
 )
 
-# Solana импорты - обновленные                                                                                                                                                           from solana.rpc.commitment import Confirmed
+# Solana импорты - обновленные                                                                                                                                                           
 from solana.rpc.api import Client
 from solana.rpc.types import MemcmpOpts
 from solana.rpc.core import RPCException
@@ -149,7 +149,7 @@ pool_state = PoolState()
 # Инициализация Solana клиента
 solana_client = AsyncClient(
     RPC_URL,
-    commitment=DLMM_CONFIG["commitment"],
+    commitment="confirmed",  # Простая строка вместо объекта
     timeout=30
 )
 
@@ -519,7 +519,7 @@ async def track_dlmm_pools():
                 program_id,
                 encoding="base64",
                 filters=filters,
-                commitment=Confirmed
+                commitment="confirmed"
             )
             
             if not response or not hasattr(response, 'value'):
