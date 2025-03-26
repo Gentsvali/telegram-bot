@@ -585,20 +585,19 @@ async def switch_rpc_provider():
             )
             
             # Универсальная проверка ответа RPC
-            try:
-                health = await test_client.get_health()
-                # Проверяем разные форматы ответа
-                is_valid = (
-                    (hasattr(health, 'result') and health.result == "healthy") or
-                    (hasattr(health, 'value') and getattr(health.value, 'status', None) == "ok"
-                )
-                
-                if not is_valid:
-                    raise ConnectionError("Некорректный статус RPC")
-                
-            except Exception as test_error:
-                await test_client.close()
-                raise test_error
+            health = await test_client.get_health()
+            await test_client.close()
+            
+            # Проверяем разные форматы ответа
+            is_valid = False
+            if hasattr(health, 'result'):
+                is_valid = health.result == "healthy"
+            elif hasattr(health, 'value'):
+                status = getattr(health.value, 'status', None)
+                is_valid = status == "ok"
+            
+            if not is_valid:
+                raise ConnectionError("Некорректный статус RPC")
             
             # Если проверка прошла, создаем основного клиента
             new_client = AsyncClient(
