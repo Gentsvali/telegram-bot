@@ -7,7 +7,7 @@ import json
 import httpx
 import signal
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 # Веб-фреймворк
 from quart import Quart, request
