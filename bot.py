@@ -28,6 +28,7 @@ from telegram.ext import (
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solana.rpc.types import MemcmpOpts
+from solana.rpc.core import RPCException
 from solders.pubkey import Pubkey
 import base58
 import base64
@@ -82,7 +83,7 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+RPC_URL = os.getenv("RPC_URL", "https://api.mainnet.rpcpool.com")
 
 # Настройки Solana
 COMMITMENT = "confirmed"
@@ -189,6 +190,7 @@ async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with open("filters.json", "w") as f:
             json.dump(current_filters, f, indent=4)
+        await push_to_github()
         await update.message.reply_text("✅ Фильтры успешно сохранены")
     except Exception as e:
         logger.error(f"Ошибка сохранения фильтров: {e}")
@@ -475,58 +477,56 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """Исправленная версия отслеживания пулов с httpx"""
     try:
-        logger.debug(f"Подключаемся к RPC: {RPC_URL}")
-        
         program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
         
         while True:
             try:
-                # Формируем запрос с использованием httpx
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        RPC_URL,
-                        json={
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "getProgramAccounts",
-                            "params": [
-                                str(program_id),
-                                {
-                                    "encoding": "base64",
-                                    "filters": [
-                                        {"dataSize": DLMM_CONFIG["pool_size"]},
-                                        {
-                                            "memcmp": {
-                                                "offset": 0,
-                                                "bytes": base58.b58encode(bytes([1])).decode()
-                                            }
-                                        }
-                                    ]
-                                }
-                            ]
+                # Формируем современный запрос
+                params = {
+                    "encoding": "base64",
+                    "dataSlice": {
+                        "offset": 0,
+                        "length": DLMM_CONFIG["pool_size"]
+                    },
+                    "filters": [
+                        {
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": base58.b58encode(bytes([1])).decode()
+                            }
                         }
-                    )
-                    
-                    data = response.json()
-                    
-                    if "error" in data:
-                        raise Exception(f"RPC Error: {data['error']}")
-                    
-                    accounts = data.get("result", [])
-                    
-                    # Обработка аккаунтов
-                    if accounts:
-                        logger.info(f"Найдено {len(accounts)} пулов")
-                        # ... ваша логика обработки пулов ...
-
-            except Exception as e:
-                logger.error(f"Ошибка: {e}")
-                await asyncio.sleep(DLMM_CONFIG["retry_delay"])
-
+                    ]
+                }
+                
+                response = await solana_client._provider.make_request(
+                    "getProgramAccounts",
+                    str(program_id),
+                    params
+                )
+                
+                accounts = response["result"]
+                # ... обработка аккаунтов ...
+                
+    except RPCException as e:
+        logger.error(f"RPC Error: {e}")
+        await switch_rpc_provider()  # Реализуйте переключение провайдеров
     except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
+        logger.error(f"Общая ошибка: {e}")
+
+RPC_PROVIDERS = [
+    "https://api.mainnet.rpcpool.com",
+    "https://solana-api.projectserum.com",
+    "https://solana-mainnet.rpc.extrnode.com"
+]
+
+current_rpc_index = 0
+
+async def switch_rpc_provider():
+    global current_rpc_index, solana_client
+    current_rpc_index = (current_rpc_index + 1) % len(RPC_PROVIDERS)
+    solana_client = AsyncClient(RPC_PROVIDERS[current_rpc_index])
+    logger.info(f"Переключились на RPC: {RPC_PROVIDERS[current_rpc_index]}")
 
 def decode_pool_data(data: bytes) -> dict:
     """
