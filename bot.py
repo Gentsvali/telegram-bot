@@ -166,53 +166,101 @@ async def load_filters(app=None):
     """Загружает фильтры из файла или использует значения по умолчанию"""
     global current_filters
     try:
-        # Проверяем существует ли файл
+        # Сначала пробуем загрузить из локального файла
         if os.path.exists(FILE_PATH):
             with open(FILE_PATH, 'r') as f:
                 loaded = json.load(f)
-                # Обновляем только существующие ключи
-                for key in DEFAULT_FILTERS:
-                    if key in loaded:
-                        current_filters[key] = loaded[key]
-            logger.info("Фильтры загружены из файла")
-        else:
-            current_filters = DEFAULT_FILTERS.copy()
-            logger.info("Файл фильтров не найден, используются значения по умолчанию")
+                if validate_filters(loaded):  # Проверяем валидность
+                    current_filters.update(loaded)
+                    logger.info("Фильтры загружены из файла")
+                    return
+        
+        # Если локальный файл не валиден, пробуем загрузить из GitHub
+        if GITHUB_TOKEN:
+            try:
+                url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
+                headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+                
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(url, headers=headers)
+                    if response.status_code == 200:
+                        content = base64.b64decode(response.json()["content"]).decode()
+                        loaded = json.loads(content)
+                        if validate_filters(loaded):
+                            current_filters.update(loaded)
+                            # Сохраняем локально для будущих загрузок
+                            with open(FILE_PATH, 'w') as f:
+                                json.dump(loaded, f, indent=4)
+                            logger.info("Фильтры загружены из GitHub")
+                            return
+            except Exception as github_error:
+                logger.warning(f"Ошибка загрузки из GitHub: {github_error}")
+
+        # Если ничего не получилось, используем значения по умолчанию
+        current_filters = DEFAULT_FILTERS.copy()
+        logger.info("Используются фильтры по умолчанию")
+        
     except Exception as e:
         current_filters = DEFAULT_FILTERS.copy()
         logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
-        logger.info(f"Текущие фильтры: {current_filters}")
 
 # 1. Добавляем функцию save_filters
-async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет фильтры в файл"""
+async def load_filters(app=None):
+    """Загружает фильтры из файла или использует значения по умолчанию"""
+    global current_filters
     try:
-        with open("filters.json", "w") as f:
-            json.dump(current_filters, f, indent=4)
-        await push_to_github()
-        await update.message.reply_text("✅ Фильтры успешно сохранены")
+        # Сначала пробуем загрузить из локального файла
+        if os.path.exists(FILE_PATH):
+            with open(FILE_PATH, 'r') as f:
+                loaded = json.load(f)
+                if validate_filters(loaded):  # Проверяем валидность
+                    current_filters.update(loaded)
+                    logger.info("Фильтры загружены из файла")
+                    return
+        
+        # Если локальный файл не валиден, пробуем загрузить из GitHub
+        if GITHUB_TOKEN:
+            try:
+                url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
+                headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+                
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(url, headers=headers)
+                    if response.status_code == 200:
+                        content = base64.b64decode(response.json()["content"]).decode()
+                        loaded = json.loads(content)
+                        if validate_filters(loaded):
+                            current_filters.update(loaded)
+                            # Сохраняем локально для будущих загрузок
+                            with open(FILE_PATH, 'w') as f:
+                                json.dump(loaded, f, indent=4)
+                            logger.info("Фильтры загружены из GitHub")
+                            return
+            except Exception as github_error:
+                logger.warning(f"Ошибка загрузки из GitHub: {github_error}")
+
+        # Если ничего не получилось, используем значения по умолчанию
+        current_filters = DEFAULT_FILTERS.copy()
+        logger.info("Используются фильтры по умолчанию")
+        
     except Exception as e:
-        logger.error(f"Ошибка сохранения фильтров: {e}")
-        await update.message.reply_text("❌ Ошибка сохранения фильтров")
+        current_filters = DEFAULT_FILTERS.copy()
+        logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
 
 # Инициализация подключения к Solana
 async def init_solana():
     try:
-        # Запрашиваем версию Solana
         version_response = await solana_client.get_version()
+        version_dict = version_response.to_json()  # Это уже возвращает строку JSON
+        version_data = json.loads(version_dict)  # Парсим строку в словарь
         
-        # Конвертируем ответ в словарь
-        version_dict = json.loads(version_response.to_json())
-        
-        # Проверяем структуру ответа
-        if not isinstance(version_dict.get("result"), dict):
+        if not isinstance(version_data.get("result"), dict):
             logger.error("Некорректная структура ответа RPC")
             return False
             
-        # Извлекаем версию (универсальный метод)
         solana_version = (
-            version_dict["result"].get("solana-core") 
-            or version_dict["result"].get("version")
+            version_data["result"].get("solana-core") 
+            or version_data["result"].get("version")
             or "unknown"
         )
         
