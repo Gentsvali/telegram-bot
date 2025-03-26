@@ -26,7 +26,7 @@ from telegram.ext import (
 
 # Solana импорты - обновленные
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.commitment import Confirmed
+print(AsyncClient._provider.make_request.__doc__)from solana.rpc.commitment import Confirmed
 from solana.rpc.types import MemcmpOpts
 from solana.rpc.core import RPCException
 from solders.pubkey import Pubkey
@@ -483,14 +483,12 @@ async def track_dlmm_pools():
     
     while True:
         try:
-            # Формируем современный запрос
+            # Формируем параметры запроса
             params = {
+                "program_id": str(program_id),  # program_id теперь внутри params
                 "encoding": "base64",
-                "dataSlice": {
-                    "offset": 0,
-                    "length": DLMM_CONFIG["pool_size"]
-                },
                 "filters": [
+                    {"dataSize": DLMM_CONFIG["pool_size"]},
                     {
                         "memcmp": {
                             "offset": 0,
@@ -500,16 +498,16 @@ async def track_dlmm_pools():
                 ]
             }
             
+            # Правильный вызов с 2 аргументами
             response = await solana_client._provider.make_request(
-                "getProgramAccounts",
-                str(program_id),
-                params
+                "getProgramAccounts",  # 1-й аргумент: название метода
+                params                 # 2-й аргумент: параметры
             )
             
             accounts = response["result"]
             # ... обработка аккаунтов ...
             
-        except RPCException as e:  # Исправлено название исключения
+        except RPCException as e:
             logger.error(f"RPC Error: {e}")
             await switch_rpc_provider()
         except Exception as e:
@@ -533,6 +531,8 @@ async def switch_rpc_provider():
         current_rpc_index = (current_rpc_index + 1) % len(RPC_PROVIDERS)
         if current_rpc_index == original_index:
             logger.error("Все RPC недоступны!")
+        if "error" in response:
+            raise RPCException(response["error"])
             return False
             
         try:
