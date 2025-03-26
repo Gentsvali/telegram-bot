@@ -207,24 +207,21 @@ async def load_filters(app=None):
 
 # Инициализация подключения к Solana
 async def init_solana():
-    """Инициализация подключения к Solana с улучшенной обработкой ответов"""
+    """Инициализация подключения к Solana RPC с правильной обработкой JSON-RPC формата"""
     try:
         version_response = await solana_client.get_version()
         
-        # Универсальная обработка разных форматов ответа
-        if hasattr(version_response, 'to_json'):
-            version_data = json.loads(version_response.to_json())
-        elif hasattr(version_response, 'result'):
-            version_data = version_response.result
-        else:
-            version_data = version_response
-
-        # Извлекаем версию Solana
+        # Правильная обработка JSON-RPC ответа
+        if not hasattr(version_response, '__dict__'):
+            version_response = version_response.__dict__
+            
+        if 'result' not in version_response:
+            raise ValueError("Некорректный формат RPC ответа - отсутствует 'result'")
+        
+        result = version_response['result']
         solana_version = (
-            version_data.get('solana-core') 
-            or version_data.get('version')
-            or "unknown"
-        )
+            result.get('solana-core', 
+            result.get('version', 'unknown'))
         
         logger.info(f"✅ Успешно подключено к Solana ноде v{solana_version}")
         return True
@@ -488,33 +485,60 @@ async def check_connection():
 from solana.rpc.core import RPCException  # Добавьте этот импорт
 
 async def track_dlmm_pools():
+    """Отслеживание DLMM пулов с правильными RPC фильтрами"""
     program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
     
     while True:
         try:
-            # Формируем параметры запроса
-            params = {
-                "program_id": str(program_id),  # program_id теперь внутри params
-                "encoding": "base64",
-                "filters": [
-                    {"dataSize": DLMM_CONFIG["pool_size"]},
-                    {
-                        "memcmp": {
-                            "offset": 0,
-                            "bytes": base58.b58encode(bytes([1])).decode()
-                        }
+            # Правильные фильтры согласно документации Solana
+            filters = [
+                {"dataSize": DLMM_CONFIG["pool_size"]},
+                {
+                    "memcmp": {
+                        "offset": 0,
+                        "bytes": base58.b58encode(bytes([1])).decode()
                     }
-                ]
-            }
+                }
+            ]
             
-            # Правильный вызов с 2 аргументами
+            # Выполняем запрос с правильными параметрами
             response = await solana_client._provider.make_request(
-                "getProgramAccounts",  # 1-й аргумент: название метода
-                params                 # 2-й аргумент: параметры
+                "getProgramAccounts",
+                {
+                    "program_id": str(program_id),
+                    "encoding": "base64",
+                    "filters": filters
+                }
             )
             
-            accounts = response["result"]
-            # ... обработка аккаунтов ...
+            # Проверка структуры ответа
+            if not isinstance(response, dict) or 'result' not in response:
+                raise RPCException("Некорректный формат RPC ответа")
+                
+            accounts = response['result']
+            
+            # Обработка каждого аккаунта
+            for account in accounts:
+                try:
+                    if not all(k in account for k in ['account', 'pubkey']):
+                        continue
+                        
+                    account_data = account['account']
+                    pool_address = account['pubkey']
+                    
+                    # Декодирование данных пула
+                    if 'data' in account_data:
+                        decoded_data = decode_pool_data(account_data['data'])
+                        if decoded_data:
+                            await handle_pool_change({
+                                **decoded_data,
+                                "address": pool_address
+                            })
+                            
+                except Exception as e:
+                    logger.error(f"Ошибка обработки аккаунта {pool_address}: {e}")
+            
+            await asyncio.sleep(DLMM_CONFIG["update_interval"])
             
         except RPCException as e:
             logger.error(f"RPC Error: {e}")
@@ -532,28 +556,41 @@ RPC_PROVIDERS = [
 current_rpc_index = 0
 
 async def switch_rpc_provider():
-    """Переключение RPC провайдера с проверкой доступности"""
+    """Надежное переключение RPC провайдеров с задержкой"""
     global current_rpc_index, solana_client
     
     original_index = current_rpc_index
-    while True:
+    max_attempts = len(RPC_PROVIDERS)
+    
+    for attempt in range(max_attempts):
         current_rpc_index = (current_rpc_index + 1) % len(RPC_PROVIDERS)
-        if current_rpc_index == original_index:
-            logger.error("Все RPC недоступны!")
-        if "error" in response:
-            raise RPCException(response["error"])
-            return False
-            
+        new_url = RPC_PROVIDERS[current_rpc_index]
+        
         try:
-            new_client = AsyncClient(RPC_PROVIDERS[current_rpc_index])
+            # Создаем нового клиента с таймаутом
+            new_client = AsyncClient(
+                new_url,
+                timeout=30,
+                commitment=DLMM_CONFIG["commitment"]
+            )
+            
+            # Проверяем подключение
             await new_client.get_version()
+            
+            # Закрываем старое подключение
+            await solana_client.close()
             solana_client = new_client
-            logger.info(f"Успешное переключение на: {RPC_PROVIDERS[current_rpc_index]}")
+            
+            logger.info(f"Успешно переключено на RPC: {new_url}")
             return True
+            
         except Exception as e:
-            logger.warning(f"RPC {RPC_PROVIDERS[current_rpc_index]} недоступен: {e}")
-
-def decode_pool_data(data: bytes) -> dict:
+            logger.warning(f"RPC {new_url} недоступен: {e}")
+            await asyncio.sleep(5)  # Задержка между попытками
+            
+    logger.error("Все RPC провайдеры недоступны!")
+    return False 
+                                                                                         def decode_pool_data(data: bytes) -> dict:
     """
     Декодирует бинарные данные DLMM пула в словарь.
     """
@@ -599,60 +636,43 @@ def decode_pool_data(data: bytes) -> dict:
         return {}
 
 async def handle_pool_change(pool_data: dict):
-    """
-    Обрабатывает изменения в DLMM пуле и отправляет уведомления
-    """
+    """Обработка изменений пула с проверкой структуры данных"""
+    required_fields = [
+        'address', 'mint_x', 'mint_y', 'liquidity',
+        'volume_1h', 'volume_5m', 'bin_step', 'base_fee'
+    ]
+    
     try:
-        address = pool_data.get("address")
-        if not address:
-            logger.error("Отсутствует адрес пула")
-            return
-
-        logger.info(f"Обработка данных пула: {address}")
-
-        # Проверяем, соответствует ли пул фильтрам
+        # Проверка наличия всех обязательных полей
+        if not all(field in pool_data for field in required_fields):
+            raise ValueError("Отсутствуют обязательные поля в данных пула")
+        
+        address = pool_data['address']
+        
+        # Проверка соответствия фильтрам
         if not filter_pool(pool_data):
             logger.debug(f"Пул {address} не соответствует фильтрам")
             return
 
-        # Получаем базовую информацию о пуле
-        mint_x = pool_data.get("mint_x", "Unknown")
-        mint_y = pool_data.get("mint_y", "Unknown")
-
-        # Форматируем сообщение
-        message = (
-            f"⭐️ НАСОС ⇆SOL 🔥<1ч\n"
-            f"☄️ Метеоры (https://edge.meteora.ag/dlmm/{address}) "
-            f"⟨ 4 бассейна (https://meteoranavigator.com/en/pools?sort=liquidity_now&sort_order=desc&search={mint_x}) ⟩\n"
-            f"🐊 gmgn (https://gmgn.ai/sol/token/{mint_x}) "
-            f"🦅 Dexscreener (https://dexscreener.com/solana/{address})\n"
-            f"😼 Наборы (https://trench.bot/bundles/{mint_x}?all=true)\n"
-            f"{mint_x}\n"
-            f"╔ ТВЛ ➙ {pool_data.get('tvl_sol', 0):,.3f} SOL\n"
-            f"╟ Шаг корзины ➙ {pool_data.get('bin_step', 0)}\n"
-            f"╟ Базовая комиссия ➙ {pool_data.get('base_fee', 0):.1f}%\n"
-            f"╟ Тариф 5мин\\1ч ➙ {pool_data.get('volume_5m_sol', 0):,.3f}\\{pool_data.get('volume_1h_sol', 0):,.3f} SOL\n"
-            f"╟ Объем 5мин\\1ч ➙ {pool_data.get('volume_5m_sol', 0):,.3f}\\{pool_data.get('volume_1h_sol', 0):,.3f} SOL\n"
-            f"╟ Комиссия 24ч/TVL ➙ {pool_data.get('fee_tvl_ratio_24h', 0):.2f}%\n"
-            f"╚ Динамическая 1-часовая плата/TVL ➙ {pool_data.get('dynamic_fee_tvl_ratio', 0):.2f}%"
-        )
-
-        # Отправляем сообщение
+        # Форматирование сообщения
+        message = format_pool_message(pool_data)
+        if not message:
+            raise ValueError("Не удалось сформировать сообщение")
+        
+        # Отправка уведомления
         await application.bot.send_message(
             chat_id=USER_ID,
             text=message,
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
-
-        # Обновляем кэш
+        
+        # Обновление кэша
         pool_state.pool_data[address] = pool_data
         pool_state.last_update[address] = int(time.time())
         
-        logger.info(f"Сообщение отправлено для пула {address}")
-
     except Exception as e:
-        logger.error(f"Ошибка обработки изменений пула: {e}", exc_info=True)
+        logger.error(f"Ошибка обработки пула {pool_data.get('address', 'unknown')}: {e}")
 
 async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет фильтры в файл"""
