@@ -162,49 +162,7 @@ application = (
     .build()
 )
 
-async def load_filters(app=None):
-    """Загружает фильтры из файла или использует значения по умолчанию"""
-    global current_filters
-    try:
-        # Сначала пробуем загрузить из локального файла
-        if os.path.exists(FILE_PATH):
-            with open(FILE_PATH, 'r') as f:
-                loaded = json.load(f)
-                if validate_filters(loaded):  # Проверяем валидность
-                    current_filters.update(loaded)
-                    logger.info("Фильтры загружены из файла")
-                    return
-        
-        # Если локальный файл не валиден, пробуем загрузить из GitHub
-        if GITHUB_TOKEN:
-            try:
-                url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
-                headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-                
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(url, headers=headers)
-                    if response.status_code == 200:
-                        content = base64.b64decode(response.json()["content"]).decode()
-                        loaded = json.loads(content)
-                        if validate_filters(loaded):
-                            current_filters.update(loaded)
-                            # Сохраняем локально для будущих загрузок
-                            with open(FILE_PATH, 'w') as f:
-                                json.dump(loaded, f, indent=4)
-                            logger.info("Фильтры загружены из GitHub")
-                            return
-            except Exception as github_error:
-                logger.warning(f"Ошибка загрузки из GitHub: {github_error}")
 
-        # Если ничего не получилось, используем значения по умолчанию
-        current_filters = DEFAULT_FILTERS.copy()
-        logger.info("Используются фильтры по умолчанию")
-        
-    except Exception as e:
-        current_filters = DEFAULT_FILTERS.copy()
-        logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
-
-# 1. Добавляем функцию save_filters
 async def load_filters(app=None):
     """Загружает фильтры из файла или использует значения по умолчанию"""
     global current_filters
@@ -692,37 +650,66 @@ async def handle_pool_change(pool_data: dict):
     except Exception as e:
         logger.error(f"Ошибка обработки изменений пула: {e}", exc_info=True)
 
+async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет фильтры в файл"""
+    try:
+        with open(FILE_PATH, "w") as f:
+            json.dump(current_filters, f, indent=4)
+        
+        # Если настроен GitHub, пробуем сохранить и туда
+        if GITHUB_TOKEN:
+            try:
+                url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
+                headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+                
+                async with httpx.AsyncClient() as client:
+                    # Получаем текущий SHA файла
+                    response = await client.get(url, headers=headers)
+                    sha = response.json().get("sha") if response.status_code == 200 else None
+                    
+                    # Отправляем обновление
+                    with open(FILE_PATH, "rb") as f:
+                        content = base64.b64encode(f.read()).decode()
+                    
+                    data = {
+                        "message": "Automatic filters update",
+                        "content": content,
+                        "sha": sha
+                    }
+                    await client.put(url, headers=headers, json=data)
+            except Exception as e:
+                logger.warning(f"Не удалось сохранить в GitHub: {e}")
+
+        await update.message.reply_text("✅ Фильтры успешно сохранены")
+        logger.info(f"Фильтры сохранены пользователем {update.effective_user.id}")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения фильтров: {e}")
+        await update.message.reply_text("❌ Ошибка сохранения фильтров")
+
 async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Обновляет фильтры на основе JSON-сообщения.
-    """
+    """Обновляет фильтры на основе JSON-сообщения."""
     if update.effective_user.id != USER_ID:
-        logger.warning(f"Попытка доступа от неавторизованного пользователя: {update.effective_user.id}")
         return
 
     try:
-        # Парсим JSON из сообщения
-        new_filters = json.loads(update.message.text)
+        # Удаляем команду если есть (на случай /command {json})
+        text = update.message.text
+        if text.startswith('/'):
+            text = ' '.join(text.split()[1:])
         
-        if not isinstance(new_filters, dict):
-            raise ValueError("Некорректный формат JSON. Ожидается словарь.")
-
-        # Обновляем текущие фильтры
-        for key, value in new_filters.items():
-            if key in current_filters:
-                # Проверяем тип значения для некоторых параметров
-                if key == "bin_steps" and isinstance(value, str):
-                    value = [int(v.strip()) for v in value.split(',')]
-                elif key == "verified_only" and isinstance(value, str):
-                    value = value.lower() == "true"
-                current_filters[key] = value
-            else:
-                logger.warning(f"Неизвестный параметр фильтра: {key}")
-
-        # Сохраняем фильтры
+        new_filters = json.loads(text)
+        
+        if not validate_filters(new_filters):
+            raise ValueError("Некорректная структура фильтров")
+        
+        # Обновляем только разрешенные ключи
+        for key in DEFAULT_FILTERS:
+            if key in new_filters:
+                current_filters[key] = new_filters[key]
+        
+        # Сохраняем
         await save_filters(update, context)
         await update.message.reply_text("✅ Фильтры успешно обновлены!")
-        await show_filters(update, context)
         logger.info(f"Пользователь {update.effective_user.id} обновил фильтры через JSON")
     
     except json.JSONDecodeError:
@@ -732,10 +719,8 @@ async def update_filters_via_json(update: Update, context: ContextTypes.DEFAULT_
             f"Пример корректного JSON:\n```json\n{example_filters}\n```",
             parse_mode="Markdown"
         )
-        logger.warning(f"Ошибка декодирования JSON от пользователя {update.effective_user.id}")
     except ValueError as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-        logger.warning(f"Ошибка при обновлении фильтров: {e}")
     except Exception as e:
         await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
         logger.error(f"Ошибка при обработке JSON-сообщения: {e}", exc_info=True)
