@@ -24,9 +24,7 @@ from telegram.ext import (
     filters
 )
 
-# Solana импорты - обновленные
-from solana.rpc.async_api import AsyncClient
-print(AsyncClient._provider.make_request.__doc__)                                       from solana.rpc.commitment import Confirmed
+# Solana импорты - обновленные                                                          from solana.rpc.commitment import Confirmed
 from solana.rpc.types import MemcmpOpts
 from solana.rpc.core import RPCException
 from solders.pubkey import Pubkey
