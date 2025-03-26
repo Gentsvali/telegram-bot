@@ -291,16 +291,18 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup():
-        # Проверка доступности RPC
-    test_rpc = os.getenv("RPC_URL")
+    """Корректная инициализация приложения с обработкой ошибок"""
     try:
-        async with AsyncClient(test_rpc) as test_client:
-            health = await test_client.get_health()
-            if health != "ok":
-                raise ConnectionError("RPC не доступен")
-    except:
-        logger.critical(f"RPC {test_rpc} недоступен!")
-        exit(1)
+        # Проверка доступности RPC
+        test_rpc = os.getenv("RPC_URL")
+        try:
+            async with AsyncClient(test_rpc) as test_client:
+                health = await test_client.get_health()
+                if health != "ok":
+                    raise ConnectionError("RPC не доступен")
+        except Exception as e:
+            logger.critical(f"RPC {test_rpc} недоступен: {str(e)}")
+            exit(1)
 
         # Инициализация Solana клиента
         if not await init_solana():
@@ -316,7 +318,7 @@ async def startup():
         logger.info(f"Вебхук установлен: {WEBHOOK_URL}/{TELEGRAM_TOKEN} ✅")
 
         # Загрузка фильтров
-        await load_filters(application)
+        await load_filters()
         logger.info("Фильтры успешно загружены ✅")
 
         # Запуск задачи для отслеживания пулов
@@ -324,6 +326,7 @@ async def startup():
         logger.info("Задача для отслеживания DLMM пулов запущена ✅")
 
         logger.info("Приложение успешно инициализировано 🚀")
+        
     except Exception as e:
         logger.error(f"Ошибка при запуске приложения: {e}", exc_info=True)
         raise
