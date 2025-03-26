@@ -208,20 +208,27 @@ async def load_filters(app=None):
 
 # Инициализация подключения к Solana
 async def init_solana() -> bool:
-    """Инициализация подключения к Solana"""
+    """Универсальная проверка подключения к Solana"""
     try:
         response = await solana_client.get_version()
         
-        # Обработка разных форматов ответа
-        if hasattr(response, 'value'):  # Для новых версий solana-py
-            version = response.value.version
-        elif hasattr(response, 'result'):  # Для старых версий
-            version = response.result.get('version', 'unknown')
-        else:
-            version = 'unknown'
+        # Обработка для новых версий solana-py (solders)
+        if hasattr(response, 'value'):
+            version_info = response.value
+            version = getattr(version_info, 'solana_core', None) or getattr(version_info, 'version', 'unknown')
+            logger.info(f"✅ Подключено к Solana (v{version})")
+            return True
             
-        logger.info(f"✅ Подключено к Solana ноде (версия: {version})")
-        return True
+        # Обработка для старых версий
+        if hasattr(response, 'to_json'):
+            version_data = json.loads(response.to_json())
+            version = version_data.get('result', {}).get('version', 'unknown')
+            logger.info(f"✅ Подключено к Solana (v{version})")
+            return True
+            
+        # Если ответ в неожиданном формате
+        logger.error(f"Неподдерживаемый формат ответа RPC: {type(response)}")
+        return False
         
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Solana: {str(e)}")
@@ -305,45 +312,34 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup():
-    """Корректная инициализация приложения"""
+    """Запуск приложения с улучшенной обработкой ошибок"""
     try:
-        # 1. Проверка RPC через прямое подключение (без отдельной функции)
+        # 1. Проверка базового подключения к RPC
         test_rpc = os.getenv("RPC_URL")
         try:
-            temp_client = AsyncClient(test_rpc)
-            version = await temp_client.get_version()
-            if not hasattr(version, 'result') and not hasattr(version, 'value'):
-                raise ConnectionError("Некорректный ответ RPC")
-            await temp_client.close()
+            async with AsyncClient(test_rpc) as temp_client:
+                health = await temp_client.get_epoch_info()  # Более надежная проверка
+                if not hasattr(health, 'result') and not hasattr(health, 'value'):
+                    raise ConnectionError("Некорректный ответ RPC")
         except Exception as e:
             logger.critical(f"RPC {test_rpc} недоступен: {str(e)}")
             exit(1)
 
-        # 2. Основная инициализация Solana клиента
+        # 2. Основная инициализация
         if not await init_solana():
             raise Exception("Не удалось подключиться к Solana RPC")
 
-        # 3. Инициализация Telegram бота
+        # 3. Инициализация бота (ваш существующий код)
         await application.initialize()
         await application.start()
-        logger.info("Telegram бот успешно инициализирован ✅")
-
-        # 4. Установка вебхука
         await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-        logger.info(f"Вебхук установлен: {WEBHOOK_URL}/{TELEGRAM_TOKEN} ✅")
-
-        # 5. Загрузка фильтров
         await load_filters()
-        logger.info("Фильтры успешно загружены ✅")
-
-        # 6. Запуск мониторинга пулов
         asyncio.create_task(track_dlmm_pools())
-        logger.info("Задача для отслеживания DLMM пулов запущена ✅")
-
-        logger.info("Приложение успешно инициализировано 🚀")
+        
+        logger.info("🚀 Приложение успешно запущено")
         
     except Exception as e:
-        logger.error(f"Ошибка при запуске приложения: {e}", exc_info=True)
+        logger.error(f"Ошибка запуска: {e}")
         raise
 
 @app.after_serving
@@ -534,9 +530,10 @@ async def track_dlmm_pools():
             await asyncio.sleep(30)
 
 RPC_PROVIDERS = [
-    "https://api.mainnet.rpcpool.com",
+    "https://api.mainnet-beta.solana.com",
     "https://solana-api.projectserum.com",
-    "https://solana-mainnet.rpc.extrnode.com"
+    "https://rpc.ankr.com/solana",
+    "https://ssc-dao.genesysgo.net"
 ]
 
 current_rpc_index = 0
