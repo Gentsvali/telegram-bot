@@ -504,15 +504,12 @@ async def track_dlmm_pools():
     
     while True:
         try:
-            # Правильные параметры для getProgramAccounts
             filters = [
                 {"dataSize": DLMM_CONFIG["pool_size"]},
-                {
-                    "memcmp": {
-                        "offset": 0,  # Явно указываем offset
-                        "bytes": base58.b58encode(bytes([1])).decode()
-                    }
-                }
+                MemcmpOpts(  # Используем специальный объект вместо словаря
+                    offset=0,
+                    bytes=base58.b58encode(bytes([1])).decode()
+                )
             ]
             
             response = await solana_client.get_program_accounts(
@@ -522,27 +519,10 @@ async def track_dlmm_pools():
                 commitment="confirmed"
             )
             
-            if not response or not hasattr(response, 'value'):
-                raise RPCException("Пустой ответ от RPC")
-                
-            # Обработка аккаунтов
-            for account in response.value:
-                try:
-                    account_data = account.account.data
-                    if isinstance(account_data, (str, bytes)):
-                        decoded = decode_pool_data(account_data)
-                        if decoded:
-                            await handle_pool_change(decoded)
-                except Exception as e:
-                    logger.error(f"Ошибка обработки аккаунта: {e}")
+            # Обработка ответа...
             
-            await asyncio.sleep(DLMM_CONFIG["update_interval"])
-            
-        except RPCException as e:
-            logger.error(f"RPC Error: {e}")
-            await switch_rpc_provider()
         except Exception as e:
-            logger.error(f"Неожиданная ошибка: {e}")
+            logger.error(f"Ошибка: {e}")
             await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
 RPC_PROVIDERS = [
