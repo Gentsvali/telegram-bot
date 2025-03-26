@@ -577,17 +577,28 @@ async def switch_rpc_provider():
         new_url = RPC_PROVIDERS[current_rpc_index]
         
         try:
-            # Проверяем доступность нового эндпоинта
+            # Создаем временного клиента для проверки
             test_client = AsyncClient(
                 new_url,
                 timeout=10,
                 commitment=DLMM_CONFIG["commitment"]
             )
             
-            # Проверяем через простой запрос
-            health = await test_client.get_health()
-            if not (hasattr(health, 'result') and not (hasattr(health, 'value')):
-                raise ConnectionError("Некорректный ответ от RPC")
+            # Универсальная проверка ответа RPC
+            try:
+                health = await test_client.get_health()
+                # Проверяем разные форматы ответа
+                is_valid = (
+                    (hasattr(health, 'result') and health.result == "healthy") or
+                    (hasattr(health, 'value') and getattr(health.value, 'status', None) == "ok"
+                )
+                
+                if not is_valid:
+                    raise ConnectionError("Некорректный статус RPC")
+                
+            except Exception as test_error:
+                await test_client.close()
+                raise test_error
             
             # Если проверка прошла, создаем основного клиента
             new_client = AsyncClient(
@@ -606,9 +617,8 @@ async def switch_rpc_provider():
         except Exception as e:
             logger.warning(f"RPC {new_url} недоступен: {str(e)}")
             if attempt < max_attempts - 1:
-                await asyncio.sleep(2)  # Задержка между попытками
+                await asyncio.sleep(2)
     
-    # Если все попытки исчерпаны
     logger.critical("Все RPC провайдеры недоступны! Возвращаем исходный")
     current_rpc_index = original_index
     return False
