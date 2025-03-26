@@ -307,30 +307,36 @@ app = Quart(__name__)
 async def startup():
     """Корректная инициализация приложения"""
     try:
-        # Проверка доступности RPC
+        # 1. Проверка RPC через прямое подключение (без отдельной функции)
         test_rpc = os.getenv("RPC_URL")
-        if not await check_rpc_health(test_rpc):
-            logger.critical(f"RPC {test_rpc} недоступен или не отвечает")
+        try:
+            temp_client = AsyncClient(test_rpc)
+            version = await temp_client.get_version()
+            if not hasattr(version, 'result') and not hasattr(version, 'value'):
+                raise ConnectionError("Некорректный ответ RPC")
+            await temp_client.close()
+        except Exception as e:
+            logger.critical(f"RPC {test_rpc} недоступен: {str(e)}")
             exit(1)
 
-        # Инициализация Solana клиента
+        # 2. Основная инициализация Solana клиента
         if not await init_solana():
             raise Exception("Не удалось подключиться к Solana RPC")
 
-        # Инициализация Telegram бота
+        # 3. Инициализация Telegram бота
         await application.initialize()
         await application.start()
         logger.info("Telegram бот успешно инициализирован ✅")
 
-        # Установка вебхука
+        # 4. Установка вебхука
         await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
         logger.info(f"Вебхук установлен: {WEBHOOK_URL}/{TELEGRAM_TOKEN} ✅")
 
-        # Загрузка фильтров
+        # 5. Загрузка фильтров
         await load_filters()
         logger.info("Фильтры успешно загружены ✅")
 
-        # Запуск задачи для отслеживания пулов
+        # 6. Запуск мониторинга пулов
         asyncio.create_task(track_dlmm_pools())
         logger.info("Задача для отслеживания DLMM пулов запущена ✅")
 
