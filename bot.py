@@ -24,7 +24,8 @@ from telegram.ext import (
     filters
 )
 
-# Solana импорты - обновленные                                                          from solana.rpc.commitment import Confirmed
+# Solana импорты - обновленные                                                                                                                                                           from solana.rpc.commitment import Confirmed
+from solana.rpc.api import Client
 from solana.rpc.types import MemcmpOpts
 from solana.rpc.core import RPCException
 from solana.rpc.async_api import AsyncClient
@@ -82,7 +83,7 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-RPC_URL = os.getenv("RPC_URL", "https://api.mainnet.rpcpool.com")
+RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
 
 # Настройки Solana
 COMMITMENT = "confirmed"
@@ -207,27 +208,20 @@ async def load_filters(app=None):
 
 # Инициализация подключения к Solana
 async def init_solana():
-    """Инициализация подключения к Solana RPC с правильной обработкой JSON-RPC формата"""
+    """Упрощенная и надежная инициализация"""
     try:
-        version_response = await solana_client.get_version()
-        
-        # Правильная обработка JSON-RPC ответа
-        if not hasattr(version_response, '__dict__'):
-            version_response = version_response.__dict__
+        # Проверяем соединение через простой запрос
+        health = await solana_client.get_health()
+        if health != "ok":
+            raise ConnectionError("RPC не здоров")
             
-        if 'result' not in version_response:
-            raise ValueError("Некорректный формат RPC ответа - отсутствует 'result'")
-        
-        result = version_response['result']
-        solana_version = (
-            result.get('solana-core'), 
-            result.get('version', 'unknown'))
-        
-        logger.info(f"✅ Успешно подключено к Solana ноде v{solana_version}")
+        # Дополнительная проверка версии
+        version = await solana_client.get_version()
+        logger.info(f"Подключено к Solana {getattr(version, 'version', 'unknown')}")
         return True
         
     except Exception as e:
-        logger.error(f"❌ Ошибка подключения к Solana: {str(e)}")
+        logger.error(f"Ошибка подключения: {str(e)}")
         return False
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -297,10 +291,17 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup():
-    """
-    Запускает бота и инициализирует необходимые компоненты.
-    """
+        # Проверка доступности RPC
+    test_rpc = os.getenv("RPC_URL")
     try:
+        async with AsyncClient(test_rpc) as test_client:
+            health = await test_client.get_health()
+            if health != "ok":
+                raise ConnectionError("RPC не доступен")
+    except:
+        logger.critical(f"RPC {test_rpc} недоступен!")
+        exit(1)
+
         # Инициализация Solana клиента
         if not await init_solana():
             raise Exception("Не удалось подключиться к Solana RPC")
@@ -485,67 +486,34 @@ async def check_connection():
 from solana.rpc.core import RPCException  # Добавьте этот импорт
 
 async def track_dlmm_pools():
-    """Отслеживание DLMM пулов с правильными RPC фильтрами"""
-    program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
-    
     while True:
         try:
-            # Правильные фильтры согласно документации Solana
-            filters = [
-                {"dataSize": DLMM_CONFIG["pool_size"]},
-                {
-                    "memcmp": {
-                        "offset": 0,
-                        "bytes": base58.b58encode(bytes([1])).decode()
-                    }
-                }
-            ]
-            
-            # Выполняем запрос с правильными параметрами
-            response = await solana_client._provider.make_request(
-                "getProgramAccounts",
-                {
-                    "program_id": str(program_id),
-                    "encoding": "base64",
-                    "filters": filters
-                }
+            if not await init_solana():
+                await asyncio.sleep(10)
+                continue
+                
+            # Ваша основная логика мониторинга пулов
+            response = await solana_client.get_program_accounts(
+                Pubkey.from_string(DLMM_PROGRAM_ID),
+                encoding="base64",
+                filters=[...]
             )
             
-            # Проверка структуры ответа
-            if not isinstance(response, dict) or 'result' not in response:
-                raise RPCException("Некорректный формат RPC ответа")
+            # Обработка ответа
+            if not response or not response.result:
+                raise RPCException("Пустой ответ RPC")
                 
-            accounts = response['result']
-            
-            # Обработка каждого аккаунта
-            for account in accounts:
-                try:
-                    if not all(k in account for k in ['account', 'pubkey']):
-                        continue
-                        
-                    account_data = account['account']
-                    pool_address = account['pubkey']
-                    
-                    # Декодирование данных пула
-                    if 'data' in account_data:
-                        decoded_data = decode_pool_data(account_data['data'])
-                        if decoded_data:
-                            await handle_pool_change({
-                                **decoded_data,
-                                "address": pool_address
-                            })
-                            
-                except Exception as e:
-                    logger.error(f"Ошибка обработки аккаунта {pool_address}: {e}")
-            
+            for account in response.result:
+                await process_pool_account(account)
+                
             await asyncio.sleep(DLMM_CONFIG["update_interval"])
             
         except RPCException as e:
-            logger.error(f"RPC Error: {e}")
-            await switch_rpc_provider()
+            logger.error(f"RPC ошибка: {e}")
+            await asyncio.sleep(10)
         except Exception as e:
-            logger.error(f"Общая ошибка: {e}")
-            await asyncio.sleep(DLMM_CONFIG["retry_delay"])
+            logger.error(f"Неожиданная ошибка: {e}")
+            await asyncio.sleep(30)
 
 RPC_PROVIDERS = [
     "https://api.mainnet.rpcpool.com",
