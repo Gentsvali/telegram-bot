@@ -220,7 +220,7 @@ async def init_solana():
         
         result = version_response['result']
         solana_version = (
-            result.get('solana-core', 
+            result.get('solana-core'), 
             result.get('version', 'unknown'))
         
         logger.info(f"✅ Успешно подключено к Solana ноде v{solana_version}")
