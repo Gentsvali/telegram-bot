@@ -498,19 +498,20 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
-    
+    """Мониторинг DLMM пулов с улучшенной обработкой ошибок"""
     while True:
         try:
-            # 1. Создаём фильтры (ВАЖНО: только MemcmpOpts или только dict)
+            program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
+            
+            # 1. Создаём фильтры
             filters = [
-                MemcmpOpts(  # ТОЛЬКО такой формат
+                MemcmpOpts(
                     offset=0,
                     bytes=base58.b58encode(bytes([1])).decode()
                 )
             ]
             
-            # 2. Делаем запрос (убираем data_size)
+            # 2. Делаем запрос
             response = await solana_client.get_program_accounts(
                 program_id,
                 encoding="base64",
@@ -525,7 +526,6 @@ async def track_dlmm_pools():
                 
             for account in response.value:
                 try:
-                    # 4. Проверяем структуру аккаунта
                     if not hasattr(account, 'account'):
                         continue
                         
@@ -539,13 +539,26 @@ async def track_dlmm_pools():
             
             await asyncio.sleep(DLMM_CONFIG["update_interval"])
             
-        except Exception as e:
-            logger.error(f"Ошибка мониторинга: {e}")
+        except RPCException as rpc_error:
+            if "410 Gone" in str(rpc_error):
+                logger.warning("RPC endpoint недоступен (410), переключаемся...")
+                await switch_rpc_provider()
+            else:
+                logger.error(f"RPC ошибка: {rpc_error}")
             await asyncio.sleep(DLMM_CONFIG["retry_delay"])
+            
+        except httpx.ReadTimeout:
+            logger.warning("Таймаут подключения к RPC, пробуем другой эндпоинт")
+            await switch_rpc_provider()
+            await asyncio.sleep(DLMM_CONFIG["retry_delay"])
+            
+        except Exception as e:
+            logger.error(f"Критическая ошибка мониторинга: {str(e)}", exc_info=True)
+            await asyncio.sleep(DLMM_CONFIG["retry_delay"] * 2)  # Увеличиваем задержку
 
 RPC_PROVIDERS = [
     "https://api.mainnet-beta.solana.com",
-    "https://solana-api.projectserum.com",
+    "https://api.rpcpool.com",
     "https://rpc.ankr.com/solana",
     "https://ssc-dao.genesysgo.net"
 ]
@@ -553,7 +566,7 @@ RPC_PROVIDERS = [
 current_rpc_index = 0
 
 async def switch_rpc_provider():
-    """Надежное переключение RPC провайдеров с задержкой"""
+    """Надежное переключение RPC провайдеров с проверкой доступности"""
     global current_rpc_index, solana_client
     
     original_index = current_rpc_index
@@ -564,15 +577,24 @@ async def switch_rpc_provider():
         new_url = RPC_PROVIDERS[current_rpc_index]
         
         try:
-            # Создаем нового клиента с таймаутом
+            # Проверяем доступность нового эндпоинта
+            test_client = AsyncClient(
+                new_url,
+                timeout=10,
+                commitment=DLMM_CONFIG["commitment"]
+            )
+            
+            # Проверяем через простой запрос
+            health = await test_client.get_health()
+            if not (hasattr(health, 'result') and not (hasattr(health, 'value')):
+                raise ConnectionError("Некорректный ответ от RPC")
+            
+            # Если проверка прошла, создаем основного клиента
             new_client = AsyncClient(
                 new_url,
                 timeout=30,
                 commitment=DLMM_CONFIG["commitment"]
             )
-            
-            # Проверяем подключение
-            await new_client.get_version()
             
             # Закрываем старое подключение
             await solana_client.close()
@@ -582,10 +604,13 @@ async def switch_rpc_provider():
             return True
             
         except Exception as e:
-            logger.warning(f"RPC {new_url} недоступен: {e}")
-            await asyncio.sleep(5)  # Задержка между попытками
-            
-    logger.error("Все RPC провайдеры недоступны!")
+            logger.warning(f"RPC {new_url} недоступен: {str(e)}")
+            if attempt < max_attempts - 1:
+                await asyncio.sleep(2)  # Задержка между попытками
+    
+    # Если все попытки исчерпаны
+    logger.critical("Все RPC провайдеры недоступны! Возвращаем исходный")
+    current_rpc_index = original_index
     return False
 
 def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
