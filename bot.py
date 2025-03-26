@@ -207,21 +207,24 @@ async def load_filters(app=None):
         logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
 
 # Инициализация подключения к Solana
-async def init_solana():
-    """Упрощенная и надежная инициализация"""
+async def init_solana() -> bool:
+    """Инициализация подключения к Solana"""
     try:
-        # Проверяем соединение через простой запрос
-        health = await solana_client.get_health()
-        if health != "ok":
-            raise ConnectionError("RPC не здоров")
+        response = await solana_client.get_version()
+        
+        # Обработка разных форматов ответа
+        if hasattr(response, 'value'):  # Для новых версий solana-py
+            version = response.value.version
+        elif hasattr(response, 'result'):  # Для старых версий
+            version = response.result.get('version', 'unknown')
+        else:
+            version = 'unknown'
             
-        # Дополнительная проверка версии
-        version = await solana_client.get_version()
-        logger.info(f"Подключено к Solana {getattr(version, 'version', 'unknown')}")
+        logger.info(f"✅ Подключено к Solana ноде (версия: {version})")
         return True
         
     except Exception as e:
-        logger.error(f"Ошибка подключения: {str(e)}")
+        logger.error(f"❌ Ошибка подключения к Solana: {str(e)}")
         return False
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,22 +289,28 @@ async def handle_solana_connection_error():
     
     return False
 
+async def check_rpc_connection(rpc_url: str) -> bool:
+    """Проверяет доступность RPC endpoint"""
+    try:
+        async with AsyncClient(rpc_url) as temp_client:
+            # Проверяем через get_epoch_info (более надежно, чем get_version)
+            response = await temp_client.get_epoch_info()
+            return hasattr(response, 'result') or hasattr(response, 'value')
+    except Exception as e:
+        logger.error(f"RPC {rpc_url} недоступен: {str(e)}")
+        return False
+
 # Инициализация Quart приложения
 app = Quart(__name__)
 
 @app.before_serving
 async def startup():
-    """Корректная инициализация приложения с обработкой ошибок"""
+    """Корректная инициализация приложения"""
     try:
         # Проверка доступности RPC
         test_rpc = os.getenv("RPC_URL")
-        try:
-            async with AsyncClient(test_rpc) as test_client:
-                health = await test_client.get_health()
-                if health != "ok":
-                    raise ConnectionError("RPC не доступен")
-        except Exception as e:
-            logger.critical(f"RPC {test_rpc} недоступен: {str(e)}")
+        if not await check_rpc_health(test_rpc):
+            logger.critical(f"RPC {test_rpc} недоступен или не отвечает")
             exit(1)
 
         # Инициализация Solana клиента
