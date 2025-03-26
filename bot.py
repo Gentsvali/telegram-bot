@@ -500,34 +500,50 @@ async def check_connection():
 from solana.rpc.core import RPCException  # Добавьте этот импорт
 
 async def track_dlmm_pools():
+    program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
+    
     while True:
         try:
-            if not await init_solana():
-                await asyncio.sleep(10)
-                continue
-                
-            # Ваша основная логика мониторинга пулов
+            # Правильные параметры для getProgramAccounts
+            filters = [
+                {"dataSize": DLMM_CONFIG["pool_size"]},
+                {
+                    "memcmp": {
+                        "offset": 0,  # Явно указываем offset
+                        "bytes": base58.b58encode(bytes([1])).decode()
+                    }
+                }
+            ]
+            
             response = await solana_client.get_program_accounts(
-                Pubkey.from_string(DLMM_PROGRAM_ID),
+                program_id,
                 encoding="base64",
-                filters=[...]
+                filters=filters,
+                commitment=Confirmed
             )
             
-            # Обработка ответа
-            if not response or not response.result:
-                raise RPCException("Пустой ответ RPC")
+            if not response or not hasattr(response, 'value'):
+                raise RPCException("Пустой ответ от RPC")
                 
-            for account in response.result:
-                await process_pool_account(account)
-                
+            # Обработка аккаунтов
+            for account in response.value:
+                try:
+                    account_data = account.account.data
+                    if isinstance(account_data, (str, bytes)):
+                        decoded = decode_pool_data(account_data)
+                        if decoded:
+                            await handle_pool_change(decoded)
+                except Exception as e:
+                    logger.error(f"Ошибка обработки аккаунта: {e}")
+            
             await asyncio.sleep(DLMM_CONFIG["update_interval"])
             
         except RPCException as e:
-            logger.error(f"RPC ошибка: {e}")
-            await asyncio.sleep(10)
+            logger.error(f"RPC Error: {e}")
+            await switch_rpc_provider()
         except Exception as e:
             logger.error(f"Неожиданная ошибка: {e}")
-            await asyncio.sleep(30)
+            await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
 RPC_PROVIDERS = [
     "https://api.mainnet-beta.solana.com",
@@ -573,26 +589,25 @@ async def switch_rpc_provider():
             
     logger.error("Все RPC провайдеры недоступны!")
     return False
-
-def decode_pool_data(data: bytes) -> dict:
-    """
-    Декодирует бинарные данные DLMM пула в словарь.
-    """
+def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
+    """Улучшенная версия с сохранением вашей логики"""
     try:
-        # Проверяем минимальный размер данных
-        if len(data) < DLMM_CONFIG["pool_size"]:
-            logger.error(f"Некорректный размер данных пула: {len(data)} байт")
-            return {}
+        # Конвертируем в bytes если нужно
+        if isinstance(data, str):
+            data = base64.b64decode(data)
+        elif not isinstance(data, bytes):
+            raise ValueError(f"Неподдерживаемый тип данных: {type(data)}")
 
-        # Декодируем данные пула
-        decoded_data = {
-            # Базовая информация
-            "mint_x": base58.b58encode(data[:32]).decode(),  # Первый токен
-            "mint_y": base58.b58encode(data[32:64]).decode(),  # Второй токен
+        # Ваша оригинальная логика декодирования
+        if len(data) < DLMM_CONFIG["pool_size"]:
+            logger.error(f"Некорректный размер данных: {len(data)} байт")
+            return None
             
-            # Финансовые показатели (в lamports)
-            "liquidity": int.from_bytes(data[64:72], byteorder="little"),
-            "volume_1h": int.from_bytes(data[72:80], byteorder="little"),
+        decoded_data = {
+            "mint_x": base58.b58encode(data[:32]).decode(),
+            "mint_y": base58.b58encode(data[32:64]).decode(),
+            "liquidity": int.from_bytes(data[64:72], "little"),
+            "volume_1h": int.from_bytes(data[72:80], byteorder="little"),                                                                                                                                                        
             "volume_5m": int.from_bytes(data[80:88], byteorder="little"),
             
             # Параметры пула
