@@ -589,8 +589,9 @@ async def switch_rpc_provider():
             await asyncio.sleep(5)  # Задержка между попытками
             
     logger.error("Все RPC провайдеры недоступны!")
-    return False 
-                                                                                         def decode_pool_data(data: bytes) -> dict:
+    return False
+
+def decode_pool_data(data: bytes) -> dict:
     """
     Декодирует бинарные данные DLMM пула в словарь.
     """
