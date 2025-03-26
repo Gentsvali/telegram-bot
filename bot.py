@@ -4,6 +4,7 @@ import sys
 import asyncio
 import time
 import json
+import httpx
 import signal
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -181,6 +182,17 @@ async def load_filters(app=None):
         current_filters = DEFAULT_FILTERS.copy()
         logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
         logger.info(f"Текущие фильтры: {current_filters}")
+
+# 1. Добавляем функцию save_filters
+async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет фильтры в файл"""
+    try:
+        with open("filters.json", "w") as f:
+            json.dump(current_filters, f, indent=4)
+        await update.message.reply_text("✅ Фильтры успешно сохранены")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения фильтров: {e}")
+        await update.message.reply_text("❌ Ошибка сохранения фильтров")
 
 # Инициализация подключения к Solana
 async def init_solana():
@@ -463,59 +475,55 @@ async def check_connection():
         return False
 
 async def track_dlmm_pools():
-    """Рабочая версия с низкоуровневым RPC-вызовом"""
+    """Отслеживает DLMM пулы используя getProgramAccounts"""
     try:
+        logger.debug(f"Инициализация мониторинга пулов. RPC: {RPC_URL}")
+        logger.debug(f"DLMM Program ID: {DLMM_PROGRAM_ID}")
+
         program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
         
         while True:
             try:
-                # 1. Формируем raw RPC-запрос
-                request = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getProgramAccounts",
-                    "params": [
-                        str(program_id),
+                # Создаем конфигурацию для запроса
+                config = {
+                    "commitment": DLMM_CONFIG["commitment"],
+                    "encoding": "base64",
+                    "filters": [
                         {
-                            "encoding": "base64",
-                            "filters": [
-                                {"dataSize": DLMM_CONFIG["pool_size"]},
-                                {
-                                    "memcmp": {
-                                        "offset": 0,
-                                        "bytes": base58.b58encode(bytes([1])).decode()
-                                    }
-                                }
-                            ]
+                            "dataSize": DLMM_CONFIG["pool_size"]
+                        },
+                        {
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": base58.b58encode(bytes([1])).decode(),
+                                "encoding": "base58"
+                            }
                         }
                     ]
                 }
                 
-                # 2. Отправляем запрос вручную
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(RPC_URL, json=request)
-                    result = response.json()
+                logger.debug(f"Отправляем запрос с конфигурацией:\n{json.dumps(config, indent=2)}")
                 
-                # 3. Обрабатываем ответ
-                if "error" in result:
-                    raise Exception(f"RPC error: {result['error']}")
-                
-                accounts = result.get("result", [])
-                
+                # Получаем аккаунты
+                accounts = await solana_client.get_program_accounts(
+                    program_id,
+                    config
+                )
+
                 if not accounts:
-                    logger.warning("No pools found")
+                    logger.warning("Не найдено активных пулов")
                     await asyncio.sleep(DLMM_CONFIG["update_interval"])
                     continue
 
-                logger.info(f"Processing {len(accounts)} pools")
+                logger.info(f"Получено {len(accounts)} пулов для анализа")
                 
                 for acc in accounts:
                     try:
-                        pubkey = acc["pubkey"]
+                        pubkey = str(acc.pubkey)
                         if pubkey in pool_state.last_checked_pools:
                             continue
                             
-                        pool_data = decode_pool_data(base64.b64decode(acc["account"]["data"][0]))
+                        pool_data = decode_pool_data(base64.b64decode(acc.account.data))
                         if pool_data and filter_pool(pool_data):
                             await handle_pool_change({
                                 "address": pubkey,
@@ -524,16 +532,20 @@ async def track_dlmm_pools():
                             pool_state.last_checked_pools.add(pubkey)
                             
                     except Exception as e:
-                        logger.error(f"Pool processing error: {e}")
+                        logger.error(f"Сбой обработки пула {pubkey}: {e}")
+                        continue
 
                 await asyncio.sleep(DLMM_CONFIG["update_interval"])
 
             except Exception as e:
-                logger.error(f"Request error: {e}")
+                logger.error(f"Ошибка при запросе пулов: {e}")
+                if "rate limit" in str(e).lower():
+                    logger.warning("Превышен лимит запросов, ожидаем перед повторной попыткой")
+                    await asyncio.sleep(5)
                 await asyncio.sleep(DLMM_CONFIG["retry_delay"])
 
     except Exception as e:
-        logger.error(f"Critical error: {e}")
+        logger.error(f"Критическая ошибка в track_dlmm_pools: {e}", exc_info=True)
 
 def decode_pool_data(data: bytes) -> dict:
     """
@@ -1021,57 +1033,15 @@ def format_pool_message(pool: dict) -> str:
         logger.error(f"Непредвиденная ошибка при форматировании пула {pool.get('address', 'N/A')}: {e}", exc_info=True)
         return None
 
-async def check_new_pools(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Проверяет новые пулы и отправляет уведомления при соответствии фильтрам.
-    Использует оптимизированную обработку ошибок и кэширование.
-    """
+# 2. Исправляем функцию check_new_pools
+async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /checkpools"""
     try:
-        if not context or not hasattr(context, 'bot'):
-            raise ValueError("Некорректный контекст")
-
-        pools = await fetch_pools()
-        if not pools:
-            logger.info("Нет доступных пулов для проверки")
-            return
-
-        # Используем множество для эффективной проверки новых пулов
-        new_pool_addresses = {
-            pool["address"] for pool in pools 
-            if pool["address"] not in pool_state.last_checked_pools
-        }
-
-        if not new_pool_addresses:
-            logger.info("Новых пулов не найдено")
-            return
-
-        # Фильтруем и обрабатываем только новые пулы
-        for pool in pools:
-            if pool["address"] in new_pool_addresses:
-                try:
-                    if filter_pool(pool):
-                        message = format_pool_message(pool)
-                        if message:
-                            await context.bot.send_message(
-                                chat_id=USER_ID,
-                                text=message,
-                                parse_mode="Markdown",
-                                disable_web_page_preview=True
-                            )
-                            pool_state.last_checked_pools.add(pool["address"])
-                except Exception as e:
-                    logger.error(f"Ошибка обработки пула {pool.get('address')}: {e}")
-                    continue
-
+        await track_dlmm_pools()
+        await update.message.reply_text("✅ Проверка пулов запущена")
     except Exception as e:
-        logger.error(f"Ошибка проверки пулов: {e}", exc_info=True)
-        try:
-            await context.bot.send_message(
-                chat_id=USER_ID,
-                text="⚠️ Ошибка при проверке пулов"
-            )
-        except Exception as send_error:
-            logger.error(f"Ошибка отправки уведомления об ошибке: {send_error}")
+        logger.error(f"Ошибка проверки пулов: {e}")
+        await update.message.reply_text("❌ Ошибка при проверке пулов")
 
 def setup_command_handlers(application: ApplicationBuilder):
     """
