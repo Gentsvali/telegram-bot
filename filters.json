@@ -5,10 +5,10 @@
         50,
         100
     ],
-    "min_tvl": 5.0,
+    "min_tvl": 1.0,
     "base_fee_min": 0.5,
     "base_fee_max": 10.0,
-    "volume_1h_min": 5.0,
+    "volume_1h_min": 1.0,
     "volume_5m_min": 0.5,
     "fee_tvl_ratio_24h_min": 0.2,
     "dynamic_fee_tvl_ratio_min": 0.3
