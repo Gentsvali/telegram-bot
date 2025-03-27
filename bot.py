@@ -83,7 +83,7 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-RPC_URL = os.getenv("RPC_URL", "https://api.devnet.solana.com")
+RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
 
 # Настройки Solana
 COMMITMENT = "confirmed"
@@ -166,7 +166,7 @@ current_rpc_index = 0
 solana_client = AsyncClient(
     RPC_ENDPOINTS[current_rpc_index],
     commitment="confirmed",
-    timeout=30
+    timeout=60
 )
 
 # Инициализация приложения Telegram
