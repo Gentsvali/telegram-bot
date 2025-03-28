@@ -853,3 +853,6 @@ async def startup_sequence():
         except Exception as e:
             logger.error(f"💥 Критическая ошибка при запуске: {e}")
             return False
+        
+        if __name__ == '__main__':
+            app.run()
