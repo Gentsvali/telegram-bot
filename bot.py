@@ -14,6 +14,7 @@ from quart import Quart, request
 
 # Загрузка переменных окружения
 from dotenv import load_dotenv
+load_dotenv()
 
 from telegram import Update
 from telegram.ext import (
@@ -25,6 +26,7 @@ from telegram.ext import (
 )
 
 # Solana импорты - обновленные                                                                                                                                                           
+from solana.rpc.async_api import AsyncClient
 from solana.rpc.core import RPCException as SolanaRpcException
 from solders.pubkey import Pubkey
 import base58
@@ -141,6 +143,9 @@ class PoolState:
 
 pool_state = PoolState()
 
+# Инициализация клиента Solana
+solana_client = AsyncClient("https://api.mainnet-beta.solana.com")
+
 # Инициализация приложения Telegram
 application = (
     ApplicationBuilder()
@@ -151,6 +156,11 @@ application = (
     .build()
 )
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик ошибок бота."""
+    logger.error(f"Ошибка при обработке обновления: {context.error}", exc_info=context.error)
+    if update and isinstance(update, Update) and update.effective_message:
+        await update.effective_message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
 
 async def load_filters(app=None):
     """Загружает фильтры из файла или использует значения по умолчанию"""
@@ -204,12 +214,23 @@ app = Quart(__name__)
 async def startup():
     """Запуск приложения с улучшенной обработкой ошибок"""
     try:
+        # 1. Проверка подключения к Solana
+        logger.info("🔌 Проверяем подключение к Solana...")
+        try:
+            await solana_client.is_connected()
+            logger.info("✅ Подключение к Solana работает")
+        except Exception as e:
+            logger.error(f"❌ Ошибка подключения к Solana: {e}")
+            raise
 
-        # 3. Инициализация бота (ваш существующий код)
+        # 2. Загрузка фильтров
+        logger.info("📥 Загрузка фильтров...")
+        await load_filters()
+        
+        # 3. Инициализация бота
         await application.initialize()
         await application.start()
         await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-        await load_filters()
         asyncio.create_task(track_dlmm_pools())
         
         logger.info("🚀 Приложение успешно запущено")
@@ -246,6 +267,20 @@ async def fetch_meteora_pools(tvl_min=1000):
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         return response.json()  # Готовые данные в JSON
+
+async def send_pool_alert(pool: dict):
+    """Отправляет уведомление о новом пуле в Telegram."""
+    try:
+        message = format_pool_message(pool)
+        if message:
+            await application.bot.send_message(
+                chat_id=USER_ID,
+                text=message,
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления: {e}")
 
 # Основные обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -337,15 +372,16 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
 async def track_dlmm_pools():
+    """Основная функция мониторинга пулов."""
     while True:
         try:
             pools = await fetch_meteora_pools(tvl_min=current_filters["min_tvl"])
             for pool in pools:
                 if pool["fee"] >= current_filters["base_fee_min"]:
-                    await send_pool_alert(pool)  # Ваша функция отправки в Telegram
+                    await send_pool_alert(pool)
             await asyncio.sleep(300)  # Проверка каждые 5 минут
         except Exception as e:
-            logger.error(f"Ошибка: {e}")
+            logger.error(f"Ошибка мониторинга пулов: {e}")
             await asyncio.sleep(60)
 
 def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
@@ -529,78 +565,6 @@ async def get_filters_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
         logger.error(f"Ошибка при обработке команды /getfiltersjson: {e}", exc_info=True)
 
-def load_filters_from_github():
-    """
-    Загружает фильтры из репозитория GitHub.
-    """
-    global current_filters
-    try:
-        # Формируем URL для получения содержимого файла
-        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
-        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-
-        # Выполняем GET-запрос
-        response = requests.get(url, headers=headers)
-        if response.status_code == 404:
-            logger.warning(f"Файл {FILE_PATH} не найден в репозитории.")
-            return
-        response.raise_for_status()  # Проверяем статус ответа
-
-        # Декодируем содержимое файла
-        content = response.json()["content"]
-        decoded_content = base64.b64decode(content).decode("utf-8")
-        loaded_filters = json.loads(decoded_content)
-
-        # Обновляем текущие фильтры
-        current_filters.update(loaded_filters)
-        logger.info("Фильтры успешно загружены из GitHub ✅")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка при загрузке фильтров из GitHub: {e}")
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка декодирования JSON из GitHub: {e}")
-    except Exception as e:
-        logger.error(f"Неизвестная ошибка при загрузке фильтров из GitHub: {e}", exc_info=True)
-
-def save_filters_to_github():
-    """
-    Сохраняет фильтры в репозиторий GitHub.
-    """
-    try:
-        # Получаем текущие фильтры
-        clean_filters = get_clean_filters()
-        content = json.dumps(clean_filters, indent=4)
-        encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-
-        # Формируем URL для обновления файла
-        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
-        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-
-        # Получаем текущий SHA файла (если он существует)
-        sha = ""
-        try:
-            response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                sha = response.json().get("sha", "")
-        except Exception as e:
-            logger.warning(f"Не удалось получить SHA файла: {e}")
-
-        # Формируем данные для PUT-запроса
-        data = {
-            "message": "Обновление фильтров",
-            "content": encoded_content,
-            "sha": sha  # SHA требуется для обновления существующего файла
-        }
-
-        # Выполняем PUT-запрос
-        response = requests.put(url, headers=headers, json=data)
-        response.raise_for_status()  # Проверяем статус ответа
-
-        logger.info("Фильтры успешно сохранены в GitHub ✅")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Ошибка при сохранении фильтров в GitHub: {e}")
-    except Exception as e:
-        logger.error(f"Неизвестная ошибка при сохранении фильтров в GitHub: {e}", exc_info=True)
-
 def filter_pool(pool: dict) -> bool:
     """
     Фильтрует DLMM пул на основе текущих фильтров.
@@ -652,141 +616,6 @@ def get_non_sol_token(mint_x: str, mint_y: str) -> str:
     except Exception as e:
         logger.error(f"Ошибка при определении не-SOL токена: {e}")
         return mint_x
-
-def save_filters_to_file():
-    """
-    Сохраняет текущие фильтры в файл с дополнительными проверками.
-    """
-    try:
-        # Проверяем наличие директории
-        directory = os.path.dirname(FILE_PATH)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory)
-            
-        # Проверяем текущие фильтры перед сохранением
-        if not validate_filters(current_filters):
-            raise ValueError("Некорректная структура фильтров")
-            
-        # Получаем очищенные фильтры
-        clean_filters = get_clean_filters()
-            
-        # Сохраняем в файл с форматированием
-        with open(FILE_PATH, "w", encoding="utf-8") as file:
-            json.dump(clean_filters, file, indent=4, ensure_ascii=False)
-            
-        logger.info(f"Фильтры успешно сохранены в {FILE_PATH} ✅")
-        return True
-        
-    except ValueError as e:
-        logger.error(f"Ошибка валидации фильтров: {e}")
-        return False
-    except IOError as e:
-        logger.error(f"Ошибка ввода/вывода при сохранении фильтров: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Неожиданная ошибка при сохранении фильтров: {e}", exc_info=True)
-        return False
-
-def load_filters_from_file():
-    """
-    Загружает фильтры из файла с дополнительными проверками и валидацией.
-    """
-    global current_filters
-    try:
-        # Проверяем существование файла
-        if not os.path.exists(FILE_PATH):
-            logger.info(f"Файл с фильтрами не найден по пути {FILE_PATH}. Использую настройки по умолчанию.")
-            return False
-            
-        # Проверяем размер файла
-        if os.path.getsize(FILE_PATH) == 0:
-            logger.warning("Файл фильтров пуст. Использую настройки по умолчанию.")
-            return False
-            
-        # Загружаем и валидируем фильтры
-        with open(FILE_PATH, "r", encoding="utf-8") as file:
-            loaded_filters = json.load(file)
-            
-            # Проверяем структуру загруженных фильтров
-            if not validate_filters(loaded_filters):
-                logger.error("Загруженные фильтры имеют некорректную структуру")
-                return False
-                
-            # Обновляем только валидные поля
-            for key, value in loaded_filters.items():
-                if key in DEFAULT_FILTERS:
-                    # Дополнительная проверка типов данных
-                    if isinstance(value, type(DEFAULT_FILTERS[key])):
-                        current_filters[key] = value
-                    else:
-                        logger.warning(f"Пропущено поле {key}: несоответствие типа данных")
-                        
-            logger.info(f"Фильтры успешно загружены из {FILE_PATH} ✅")
-            return True
-            
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка декодирования JSON: {e}")
-        return False
-    except IOError as e:
-        logger.error(f"Ошибка чтения файла: {e}")
-        return False
-    except Exception as e:
-        logger.error(f"Неожиданная ошибка при загрузке фильтров: {e}", exc_info=True)
-        return False
-
-def get_clean_filters() -> dict:
-    """
-    Возвращает очищенный словарь с настройками фильтров, проверяя типы данных и границы значений.
-    
-    Returns:
-        dict: Словарь с валидными настройками фильтров
-    """
-    # Определяем ограничения для числовых значений
-    NUMERIC_BOUNDS = {
-        "min_tvl": (0.0, 1000000.0),
-        "min_fdv": (0.0, 10000000.0),
-        "base_fee_max": (0.0, 100.0),
-        "fee_tvl_ratio_24h_min": (0.0, 100.0),
-        "volume_1h_min": (0.0, 1000000.0),
-        "volume_5m_min": (0.0, 1000000.0),
-        "dynamic_fee_tvl_ratio_min": (0.0, 100.0),
-        "min_listing_time": (0, 365),
-        "price_change_1h_min": (-100.0, 100.0),
-        "price_change_5m_min": (-100.0, 100.0),
-        "fee_change_1h_min": (-100.0, 100.0),
-        "fee_change_5m_min": (-100.0, 100.0),
-    }
-
-    clean_filters = {}
-    
-    # Обработка булевых значений
-    clean_filters["disable_filters"] = bool(current_filters.get("disable_filters", False))
-    clean_filters["verified_only"] = bool(current_filters.get("verified_only", True))
-    
-    # Обработка строковых значений
-    clean_filters["stable_coin"] = str(current_filters.get("stable_coin", "USDC"))
-    
-    # Обработка списка bin_steps
-    bin_steps = current_filters.get("bin_steps", [20, 80, 100, 125, 250])
-    if isinstance(bin_steps, list):
-        clean_filters["bin_steps"] = [
-            step for step in bin_steps 
-            if isinstance(step, (int, float)) and 1 <= step <= 1000
-        ]
-    else:
-        clean_filters["bin_steps"] = [20, 80, 100, 125, 250]
-
-    # Обработка числовых значений с проверкой границ
-    for key, (min_val, max_val) in NUMERIC_BOUNDS.items():
-        value = current_filters.get(key, DEFAULT_FILTERS.get(key, 0.0))
-        try:
-            value = float(value)
-            clean_filters[key] = max(min_val, min(value, max_val))
-        except (TypeError, ValueError):
-            clean_filters[key] = DEFAULT_FILTERS.get(key, 0.0)
-            logger.warning(f"Некорректное значение для {key}, использую значение по умолчанию")
-
-    return clean_filters
 
 def format_pool_message(pool: dict) -> str:
     """
@@ -844,7 +673,6 @@ def format_pool_message(pool: dict) -> str:
         logger.error(f"Непредвиденная ошибка при форматировании пула {pool.get('address', 'N/A')}: {e}", exc_info=True)
         return None
 
-# 2. Исправляем функцию check_new_pools
 async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /checkpools"""
     try:
@@ -854,7 +682,7 @@ async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка проверки пулов: {e}")
         await update.message.reply_text("❌ Ошибка при проверке пулов")
 
-def setup_command_handlers(application: ApplicationBuilder):
+def setup_command_handlers(application):
     """
     Настраивает обработчики команд для бота с группировкой по функциональности.
     """
@@ -900,8 +728,11 @@ def setup_command_handlers(application: ApplicationBuilder):
                 check_new_pools,
                 filters=filters.User(user_id=USER_ID)
             )
-        )  # <-- Исправлено здесь
+        )
 
+        # Обработчик неизвестных команд
+        application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+        
         logger.info("✅ Обработчики команд успешно зарегистрированы")
         
     except Exception as e:
@@ -949,150 +780,3 @@ async def webhook():
         if not data:
             logger.error("Получен пустой JSON")
             return {'error': 'Пустой JSON запрос'}, 400
-
-        # Проверка критических полей
-        if 'update_id' not in data:
-            logger.error("Отсутствует update_id в запросе")
-            return {'error': 'Некорректный формат данных'}, 400
-
-        # Обработка обновления с повторными попытками
-        for attempt in range(WebhookConfig.MAX_RETRIES):
-            try:
-                update = Update.de_json(data, application.bot)
-                await asyncio.wait_for(
-                    application.process_update(update),
-                    timeout=WebhookConfig.WEBHOOK_TIMEOUT
-                )
-                return '', 200
-            except asyncio.TimeoutError:
-                if attempt == WebhookConfig.MAX_RETRIES - 1:
-                    raise
-                await asyncio.sleep(WebhookConfig.RETRY_DELAY)
-                continue
-
-    except asyncio.TimeoutError:
-        logger.error("Таймаут обработки вебхука")
-        return {'error': 'Timeout'}, 504
-    except Exception as e:
-        logger.error(f"Ошибка в вебхуке: {e}", exc_info=True)
-        return {'error': 'Internal server error'}, 500
-
-# Расширенный healthcheck
-@app.route('/healthcheck')
-async def healthcheck():
-    """Расширенная проверка состояния сервиса."""
-    try:
-        health_status = {
-            "status": "ERROR",
-            "components": {
-                "telegram_bot": False,
-                "solana_connection": False,
-                "webhook": False
-            },
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-        # Проверка бота
-        if application.running:
-            health_status["components"]["telegram_bot"] = True
-
-        # Проверка подключения к Solana
-        try:
-            await asyncio.wait_for(check_connection(), timeout=5)
-            health_status["components"]["solana_connection"] = True
-        except Exception as e:
-            logger.warning(f"Ошибка проверки подключения к Solana: {e}")
-
-        # Проверка вебхука
-        try:
-            webhook_info = await application.bot.get_webhook_info()
-            health_status["components"]["webhook"] = bool(webhook_info.url)
-        except Exception as e:
-            logger.warning(f"Ошибка проверки вебхука: {e}")
-
-        # Общий статус
-        if all(health_status["components"].values()):
-            health_status["status"] = "OK"
-            return health_status, 200
-        return health_status, 503
-
-    except Exception as e:
-        logger.error(f"Ошибка в healthcheck: {e}", exc_info=True)
-        return {
-            "status": "ERROR",
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat()
-        }, 500
-
-# Главная страница с расширенной информацией
-@app.route('/')
-async def home():
-    """Возвращает расширенную информацию о сервисе."""
-    try:
-        return {
-            "status": "OK",
-            "version": "1.0.0",
-            "name": "Meteora Pool Monitor",
-            "description": "Telegram Bot для отслеживания пулов Meteora на Solana",
-            "endpoints": {
-                "healthcheck": "/healthcheck",
-                "webhook": f"/{TELEGRAM_TOKEN}"
-            },
-            "documentation": "https://github.com/yourusername/yourrepo",
-            "timestamp": datetime.utcnow().isoformat()
-        }, 200
-    except Exception as e:
-        logger.error(f"Ошибка на главной странице: {e}", exc_info=True)
-        return {"status": "ERROR", "error": str(e)}, 500
-
-# Улучшенный запуск приложения
-async def startup_sequence():
-    """Выполняет последовательность запуска с проверками."""
-    try:
-        # 1. Проверка подключения к Solana
-        logger.info("🔌 Проверяем подключение к Solana...")
-        try:
-            await asyncio.wait_for(check_connection(), timeout=10)
-            logger.info("✅ Подключение к Solana работает")
-        except Exception as e:
-            logger.error(f"❌ Ошибка подключения к Solana: {e}")
-            return False
-
-        # 2. Загрузка фильтров
-        logger.info("📥 Загрузка фильтров...")
-        try:
-            await load_filters(None)
-            logger.info("✅ Фильтры загружены")
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки фильтров: {e}")
-            return False
-
-        # 3. Инициализация бота
-        logger.info("🤖 Инициализация бота...")
-        try:
-            await application.initialize()
-            await application.start()
-            await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-            logger.info("✅ Бот успешно инициализирован")
-        except Exception as e:
-            logger.error(f"❌ Ошибка инициализации бота: {e}")
-            return False
-
-        return True
-
-    except Exception as e:
-        logger.error(f"💥 Критическая ошибка при запуске: {e}")
-        return False
-
-if __name__ == "__main__":
-    try:
-        # Запускаем последовательность запуска
-        if asyncio.run(startup_sequence()):
-            logger.info(f"🚀 Запускаем сервер на порту {PORT}...")
-            app.run(host='0.0.0.0', port=PORT)
-        else:
-            logger.error("❌ Ошибка при запуске приложения")
-            sys.exit(1)
-    except Exception as e:
-        logger.error(f"💥 Критическая ошибка: {e}")
-        sys.exit(1)
