@@ -142,8 +142,20 @@ async def fetch_dlmm_pools() -> List[Dict]:
             logger.error(f"Ошибка получения пулов: {e}")
             return []
     return []
+
+async def load_filters(app=None):
+    """Загружает фильтры из файла или использует значения по умолчанию"""
+    global current_filters
+    try:
+        if os.path.exists(FILE_PATH):
+            with open(FILE_PATH, 'r') as f:
+                loaded = json.load(f)
+                if validate_filters(loaded):
+                    current_filters.update(loaded)
+                    logger.info("Фильтры загружены из файла")
+                    return
         
-        if GITHUB_TOKEN:
+        if GITHUB_TOKEN:  # Теперь это часть load_filters()
             try:
                 url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
                 headers = {"Authorization": f"token {GITHUB_TOKEN}"}
@@ -836,9 +848,8 @@ async def startup_sequence():
             logger.error(f"❌ Ошибка инициализации бота: {e}")
             return False
 
-        return True
+            return True
 
-    except Exception as e:
-        logger.error(f"💥 Критическая ошибка при запуске: {e}")
-        return False
-
+        except Exception as e:
+            logger.error(f"💥 Критическая ошибка при запуске: {e}")
+            return False
