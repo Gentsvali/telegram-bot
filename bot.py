@@ -108,6 +108,14 @@ application = (
     .build()
 )
 
+async def check_internet_connection():
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.get("https://google.com", timeout=5)
+        return True
+    except:
+        return False
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик ошибок бота."""
     logger.error(f"Ошибка при обработке обновления: {context.error}", exc_info=context.error)
@@ -116,26 +124,24 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def fetch_dlmm_pools() -> List[Dict]:
     """Получаем данные пулов через DLMM API"""
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(DLMM_API_URL)
-            response.raise_for_status()
-            return response.json()
-    except Exception as e:
-        logger.error(f"Ошибка получения пулов: {e}")
-        return []
-
-async def load_filters(app=None):
-    """Загружает фильтры из файла или использует значения по умолчанию"""
-    global current_filters
-    try:
-        if os.path.exists(FILE_PATH):
-            with open(FILE_PATH, 'r') as f:
-                loaded = json.load(f)
-                if validate_filters(loaded):
-                    current_filters.update(loaded)
-                    logger.info("Фильтры загружены из файла")
-                    return
+    retries = 3
+    backoff = 1
+    
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.get(DLMM_API_URL)
+                response.raise_for_status()
+                return response.json()
+        except httpx.ConnectError as e:
+            if attempt == retries - 1:
+                logger.error(f"Не удалось подключиться к DLMM API: {e}")
+                raise
+            await asyncio.sleep(backoff * (attempt + 1))
+        except Exception as e:
+            logger.error(f"Ошибка получения пулов: {e}")
+            return []
+    return []
         
         if GITHUB_TOKEN:
             try:
@@ -186,20 +192,14 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup():
-    """Запуск приложения с улучшенной обработкой ошибок"""
     try:
-        logger.info("📥 Загрузка фильтров...")
-        await load_filters()
+        webhook_info = await application.bot.get_webhook_info()
+        logger.info(f"Текущий вебхук: {webhook_info.url}")
         
-        await application.initialize()
-        await application.start()
         await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-        asyncio.create_task(track_dlmm_pools())
-        
-        logger.info("🚀 Приложение успешно запущено")
-        
+        logger.info("Вебхук успешно установлен")
     except Exception as e:
-        logger.error(f"Ошибка запуска: {e}")
+        logger.error(f"Ошибка настройки вебхука: {e}")
         raise
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -341,14 +341,17 @@ async def track_dlmm_pools():
                 await asyncio.sleep(60)
                 continue
 
+            new_pools_found = 0
             for pool in pools:
                 if filter_pool(pool):
                     await send_pool_alert(pool)
+                    new_pools_found += 1
 
+            logger.info(f"Проверено {len(pools)} пулов, найдено {new_pools_found} соответствующих фильтрам")
             await asyncio.sleep(DLMM_UPDATE_INTERVAL)
 
         except Exception as e:
-            logger.error(f"Ошибка мониторинга пулов: {e}")
+            logger.error(f"Критическая ошибка мониторинга пулов: {e}")
             await asyncio.sleep(60)
 
 async def handle_pool_change(pool_data: bytes):
@@ -813,17 +816,6 @@ async def home():
 
 # Улучшенный запуск приложения
 async def startup_sequence():
-    """Выполняет последовательность запуска с проверками."""
-    try:
-        # 1. Проверка подключения к Solana
-        logger.info("🔌 Проверяем подключение к Solana...")
-        try:
-            await asyncio.wait_for(check_connection(), timeout=10)
-            logger.info("✅ Подключение к Solana работает")
-        except Exception as e:
-            logger.error(f"❌ Ошибка подключения к Solana: {e}")
-            return False
-
         # 2. Загрузка фильтров
         logger.info("📥 Загрузка фильтров...")
         try:
