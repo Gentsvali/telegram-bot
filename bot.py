@@ -25,10 +25,7 @@ from telegram.ext import (
 )
 
 # Solana импорты - обновленные                                                                                                                                                           
-from solana.rpc.api import Client
 from solana.rpc.core import RPCException as SolanaRpcException
-from solana.rpc.types import MemcmpOpts
-from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 import base58
 import base64
@@ -61,8 +58,7 @@ required_env_vars = [
     "TELEGRAM_TOKEN", 
     "GITHUB_TOKEN", 
     "USER_ID", 
-    "WEBHOOK_URL",
-    "RPC_URL"  # Добавлен RPC URL для Solana
+    "WEBHOOK_URL"   
 ]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 
@@ -83,7 +79,6 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
 
 # Настройки Solana
 COMMITMENT = "confirmed"
@@ -112,14 +107,6 @@ DLMM_CONFIG = {
     "commitment": "confirmed",  # Уровень подтверждения транзакций
     "retry_delay": 120,  # Задержка перед повторной попыткой при ошибке (в секундах)
 }
-
-RPC_PROVIDERS = [
-    "https://rpc.ankr.com/solana",
-    "https://ssc-dao.genesysgo.net",
-    "https://api.rpcpool.com",
-    "https://solana-mainnet.rpc.extrnode.com",
-    "https://api.mainnet-beta.solana.com"  # Оставляем на крайний случай
-]
 
 # Проверка корректности фильтров
 def validate_filters(filters: dict) -> bool:
@@ -153,21 +140,6 @@ class PoolState:
         self.last_update = {}  # Время последнего обновления
 
 pool_state = PoolState()
-
-# Инициализация Solana клиента
-RPC_ENDPOINTS = [
-    os.getenv("RPC_URL"),
-    os.getenv("BACKUP_RPC_1"),
-    os.getenv("BACKUP_RPC_2"),
-    "https://solana-mainnet.rpc.extrnode.com"  # Дополнительный бесплатный
-]
-
-current_rpc_index = 0
-solana_client = AsyncClient(
-    RPC_ENDPOINTS[current_rpc_index],
-    commitment="confirmed",
-    timeout=60
-)
 
 # Инициализация приложения Telegram
 application = (
@@ -222,106 +194,8 @@ async def load_filters(app=None):
         current_filters = DEFAULT_FILTERS.copy()
         logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
 
-# Инициализация подключения к Solana
-async def init_solana() -> bool:
-    """Универсальная проверка подключения к Solana"""
-    try:
-        response = await solana_client.get_version()
-        
-        # Обработка для новых версий solana-py (solders)
-        if hasattr(response, 'value'):
-            version_info = response.value
-            version = getattr(version_info, 'solana_core', None) or getattr(version_info, 'version', 'unknown')
-            logger.info(f"✅ Подключено к Solana (v{version})")
-            return True
-            
-        # Обработка для старых версий
-        if hasattr(response, 'to_json'):
-            version_data = json.loads(response.to_json())
-            version = version_data.get('result', {}).get('version', 'unknown')
-            logger.info(f"✅ Подключено к Solana (v{version})")
-            return True
-            
-        # Если ответ в неожиданном формате
-        logger.error(f"Неподдерживаемый формат ответа RPC: {type(response)}")
-        return False
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка подключения к Solana: {str(e)}")
-        return False
-
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Обрабатывает глобальные ошибки, возникающие в боте.
-    """
-    try:
-        error = context.error
-        
-        # Специфические ошибки Solana RPC
-        if "Rate limit exceeded" in str(error):
-            logger.warning("Превышен лимит запросов к Solana RPC")
-            message = "⚠️ Превышен лимит запросов. Попробуйте через минуту."
-        elif "Connection refused" in str(error):
-            logger.error("Ошибка подключения к Solana RPC")
-            message = "⚠️ Ошибка подключения к сети. Пробуем восстановить..."
-            # Пробуем переподключиться
-            await init_solana()
-        else:
-            # Логируем неизвестную ошибку
-            logger.error(f"Произошла ошибка: {error}", exc_info=True)
-            message = "⚠️ Произошла ошибка. Пожалуйста, попробуйте позже."
-
-        # Отправляем сообщение об ошибке пользователю
-        chat_id = update.effective_chat.id if update and update.effective_chat else USER_ID
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=message
-        )
-
-    except Exception as e:
-        logger.error(f"Ошибка в обработчике ошибок: {e}")
-        try:
-            await context.bot.send_message(
-                chat_id=USER_ID,
-                text="⚠️ Критическая ошибка в обработчике ошибок"
-            )
-        except:
-            pass
-
 # Регистрируем обработчик ошибок
 application.add_error_handler(error_handler)
-
-# Добавляем обработчик для переподключения к Solana
-async def handle_solana_connection_error():
-    """
-    Обрабатывает ошибки подключения к Solana и пытается переподключиться
-    """
-    retry_count = 0
-    max_retries = 3
-    
-    while retry_count < max_retries:
-        try:
-            if await init_solana():
-                logger.info("Успешно переподключились к Solana")
-                return True
-        except Exception as e:
-            logger.error(f"Попытка переподключения {retry_count + 1} не удалась: {e}")
-        
-        retry_count += 1
-        await asyncio.sleep(DLMM_CONFIG["retry_delay"])
-    
-    return False
-
-async def check_rpc_connection(rpc_url: str) -> bool:
-    """Проверяет доступность RPC endpoint"""
-    try:
-        async with AsyncClient(rpc_url) as temp_client:
-            # Проверяем через get_epoch_info (более надежно, чем get_version)
-            response = await temp_client.get_epoch_info()
-            return hasattr(response, 'result') or hasattr(response, 'value')
-    except Exception as e:
-        logger.error(f"RPC {rpc_url} недоступен: {str(e)}")
-        return False
 
 # Инициализация Quart приложения
 app = Quart(__name__)
@@ -330,20 +204,6 @@ app = Quart(__name__)
 async def startup():
     """Запуск приложения с улучшенной обработкой ошибок"""
     try:
-        # 1. Проверка базового подключения к RPC
-        test_rpc = os.getenv("RPC_URL")
-        try:
-            async with AsyncClient(test_rpc) as temp_client:
-                health = await temp_client.get_epoch_info()  # Более надежная проверка
-                if not hasattr(health, 'result') and not hasattr(health, 'value'):
-                    raise ConnectionError("Некорректный ответ RPC")
-        except Exception as e:
-            logger.critical(f"RPC {test_rpc} недоступен: {str(e)}")
-            exit(1)
-
-        # 2. Основная инициализация
-        if not await init_solana():
-            raise Exception("Не удалось подключиться к Solana RPC")
 
         # 3. Инициализация бота (ваш существующий код)
         await application.initialize()
@@ -381,38 +241,11 @@ async def shutdown_app():
     except Exception as e:
         logger.error(f"Ошибка при завершении работы: {e}")
 
-async def shutdown_signal(signal, loop):
-    """
-    Обрабатывает сигналы завершения.
-    """
-    logger.info(f"Получен сигнал {signal.name}. Останавливаю приложение...")
-    await solana_client.close()
-    await application.stop()
-    await application.shutdown()
-    loop.stop()
-
-def handle_shutdown(signum, frame):
-    """Обработчик сигналов завершения"""
-    logger.info(f"Получен сигнал {signum}. Останавливаю приложение...")
-    
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            shutdown_task = loop.create_task(application.shutdown())
-            loop.run_until_complete(asyncio.wait_for(shutdown_task, timeout=5))
-            
-            # Закрываем подключение к Solana
-            close_task = loop.create_task(solana_client.close())
-            loop.run_until_complete(asyncio.wait_for(close_task, timeout=5))
-    except Exception as e:
-        logger.error(f"Ошибка при завершении: {e}")
-    finally:
-        if 'loop' in locals() and not loop.is_closed():
-            loop.close()
-
-# Регистрируем обработчики сигналов
-signal.signal(signal.SIGINT, handle_shutdown)
-signal.signal(signal.SIGTERM, handle_shutdown)
+async def fetch_meteora_pools(tvl_min=1000):
+    url = f"https://dlmm.meteora.ag/api/pools?tvlMin={tvl_min}"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response.json()  # Готовые данные в JSON
 
 # Основные обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -503,113 +336,17 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
-async def check_connection():
-    """Проверяет подключение к Solana"""
-    try:
-        version = await solana_client.get_version()
-        logger.info(f"Подключено к Solana (версия: {version['solana-core']})")
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка подключения к Solana: {e}")
-        return False
-
 async def track_dlmm_pools():
-    """Мониторинг пулов с корректной обработкой ошибок"""
-    retry_count = 0
-    MAX_RETRIES = 3
-    RETRY_DELAY = 30
-    
     while True:
         try:
-            program_id = Pubkey.from_string(DLMM_PROGRAM_ID)
-            filters = [
-                MemcmpOpts(
-                    offset=0,
-                    bytes=base58.b58encode(bytes([1])).decode()
-                )
-            ]
-            
-            try:
-                # Создаем клиент с таймаутом
-                async with AsyncClient(
-                    solana_client._provider.endpoint_uri,
-                    timeout=30,
-                    commitment="confirmed"
-                ) as temp_client:
-                    response = await temp_client.get_program_accounts(
-                        program_id,
-                        encoding="base64",
-                        filters=filters,
-                        commitment="confirmed"
-                    )
-                    
-            except SolanaRpcException as rpc_exc:
-                error_msg = str(rpc_exc)
-                if "410 Gone" in error_msg:
-                    logger.warning("RPC endpoint недоступен, переключаемся...")
-                    if not await switch_rpc_provider():
-                        retry_count += 1
-                        if retry_count >= MAX_RETRIES:
-                            logger.error("Достигнут максимум попыток, пауза 5 минут")
-                            await asyncio.sleep(300)
-                            retry_count = 0
-                        continue
-                else:
-                    logger.error(f"RPC ошибка: {error_msg}")
-                    await asyncio.sleep(RETRY_DELAY)
-                continue
-                
-            except Exception as e:
-                logger.error(f"Ошибка подключения: {str(e)}")
-                await asyncio.sleep(RETRY_DELAY)
-                continue
-
-            retry_count = 0
-            
-            if not hasattr(response, 'value'):
-                logger.error("Некорректный формат ответа RPC")
-                continue
-                
-            # Обработка пулов...
-            valid_pools = 0
-            for account in response.value:
-                try:
-                    if not hasattr(account, 'account'):
-                        continue
-                    data = account.account.data
-                    if isinstance(data, str):
-                        decoded = base64.b64decode(data)
-                        await handle_pool_data(decoded)
-                        valid_pools += 1
-                except Exception as e:
-                    logger.error(f"Ошибка обработки аккаунта: {e}")
-            
-            logger.info(f"Успешно обработано пулов: {valid_pools}")
-            await asyncio.sleep(DLMM_CONFIG["update_interval"])
-            
+            pools = await fetch_meteora_pools(tvl_min=current_filters["min_tvl"])
+            for pool in pools:
+                if pool["fee"] >= current_filters["base_fee_min"]:
+                    await send_pool_alert(pool)  # Ваша функция отправки в Telegram
+            await asyncio.sleep(300)  # Проверка каждые 5 минут
         except Exception as e:
-            logger.error(f"Неожиданная ошибка: {str(e)}", exc_info=True)
-            await asyncio.sleep(RETRY_DELAY * 2)
-
-async def switch_rpc_provider():
-    global current_rpc_index, solana_client
-    
-    for _ in range(len(RPC_ENDPOINTS)):
-        current_rpc_index = (current_rpc_index + 1) % len(RPC_ENDPOINTS)
-        new_url = RPC_ENDPOINTS[current_rpc_index]
-        
-        try:
-            new_client = AsyncClient(new_url, timeout=10)
-            await new_client.get_epoch_info()  # Проверка подключения
-            await solana_client.close()
-            solana_client = new_client
-            logger.info(f"Переключено на RPC: {new_url}")
-            return True
-        except Exception as e:
-            logger.warning(f"RPC {new_url} недоступен: {str(e)}")
-    
-    logger.error("Все RPC эндпоинты недоступны!")
-    return False
+            logger.error(f"Ошибка: {e}")
+            await asyncio.sleep(60)
 
 def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
     """Улучшенная версия с сохранением вашей логики"""
@@ -1286,11 +1023,6 @@ async def healthcheck():
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }, 500
-
-@app.route('/test-solana')
-async def test_solana():
-    connected = await init_solana()
-    return {"solana_connected": connected}, 200
 
 # Главная страница с расширенной информацией
 @app.route('/')
