@@ -780,3 +780,150 @@ async def webhook():
         if not data:
             logger.error("Получен пустой JSON")
             return {'error': 'Пустой JSON запрос'}, 400
+
+        # Проверка критических полей
+        if 'update_id' not in data:
+            logger.error("Отсутствует update_id в запросе")
+            return {'error': 'Некорректный формат данных'}, 400
+
+        # Обработка обновления с повторными попытками
+        for attempt in range(WebhookConfig.MAX_RETRIES):
+            try:
+                update = Update.de_json(data, application.bot)
+                await asyncio.wait_for(
+                    application.process_update(update),
+                    timeout=WebhookConfig.WEBHOOK_TIMEOUT
+                )
+                return '', 200
+            except asyncio.TimeoutError:
+                if attempt == WebhookConfig.MAX_RETRIES - 1:
+                    raise
+                await asyncio.sleep(WebhookConfig.RETRY_DELAY)
+                continue
+
+    except asyncio.TimeoutError:
+        logger.error("Таймаут обработки вебхука")
+        return {'error': 'Timeout'}, 504
+    except Exception as e:
+        logger.error(f"Ошибка в вебхуке: {e}", exc_info=True)
+        return {'error': 'Internal server error'}, 500
+
+# Расширенный healthcheck
+@app.route('/healthcheck')
+async def healthcheck():
+    """Расширенная проверка состояния сервиса."""
+    try:
+        health_status = {
+            "status": "ERROR",
+            "components": {
+                "telegram_bot": False,
+                "solana_connection": False,
+                "webhook": False
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        # Проверка бота
+        if application.running:
+            health_status["components"]["telegram_bot"] = True
+
+        # Проверка подключения к Solana
+        try:
+            await asyncio.wait_for(check_connection(), timeout=5)
+            health_status["components"]["solana_connection"] = True
+        except Exception as e:
+            logger.warning(f"Ошибка проверки подключения к Solana: {e}")
+
+        # Проверка вебхука
+        try:
+            webhook_info = await application.bot.get_webhook_info()
+            health_status["components"]["webhook"] = bool(webhook_info.url)
+        except Exception as e:
+            logger.warning(f"Ошибка проверки вебхука: {e}")
+
+        # Общий статус
+        if all(health_status["components"].values()):
+            health_status["status"] = "OK"
+            return health_status, 200
+        return health_status, 503
+
+    except Exception as e:
+        logger.error(f"Ошибка в healthcheck: {e}", exc_info=True)
+        return {
+            "status": "ERROR",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }, 500
+
+# Главная страница с расширенной информацией
+@app.route('/')
+async def home():
+    """Возвращает расширенную информацию о сервисе."""
+    try:
+        return {
+            "status": "OK",
+            "version": "1.0.0",
+            "name": "Meteora Pool Monitor",
+            "description": "Telegram Bot для отслеживания пулов Meteora на Solana",
+            "endpoints": {
+                "healthcheck": "/healthcheck",
+                "webhook": f"/{TELEGRAM_TOKEN}"
+            },
+            "documentation": "https://github.com/yourusername/yourrepo",
+            "timestamp": datetime.utcnow().isoformat()
+        }, 200
+    except Exception as e:
+        logger.error(f"Ошибка на главной странице: {e}", exc_info=True)
+        return {"status": "ERROR", "error": str(e)}, 500
+
+# Улучшенный запуск приложения
+async def startup_sequence():
+    """Выполняет последовательность запуска с проверками."""
+    try:
+        # 1. Проверка подключения к Solana
+        logger.info("🔌 Проверяем подключение к Solana...")
+        try:
+            await asyncio.wait_for(check_connection(), timeout=10)
+            logger.info("✅ Подключение к Solana работает")
+        except Exception as e:
+            logger.error(f"❌ Ошибка подключения к Solana: {e}")
+            return False
+
+        # 2. Загрузка фильтров
+        logger.info("📥 Загрузка фильтров...")
+        try:
+            await load_filters(None)
+            logger.info("✅ Фильтры загружены")
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки фильтров: {e}")
+            return False
+
+        # 3. Инициализация бота
+        logger.info("🤖 Инициализация бота...")
+        try:
+            await application.initialize()
+            await application.start()
+            await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+            logger.info("✅ Бот успешно инициализирован")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации бота: {e}")
+            return False
+
+        return True
+
+    except Exception as e:
+        logger.error(f"💥 Критическая ошибка при запуске: {e}")
+        return False
+
+if __name__ == "__main__":
+    try:
+        # Запускаем последовательность запуска
+        if asyncio.run(startup_sequence()):
+            logger.info(f"🚀 Запускаем сервер на порту {PORT}...")
+            app.run(host='0.0.0.0', port=PORT)
+        else:
+            logger.error("❌ Ошибка при запуске приложения")
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"💥 Критическая ошибка: {e}")
+        sys.exit(1) 
