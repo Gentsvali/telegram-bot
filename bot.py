@@ -202,6 +202,65 @@ async def startup():
         logger.error(f"Ошибка запуска: {e}")
         raise
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
+    if update.effective_user.id != USER_ID:
+        logger.warning(f"Попытка доступа от неавторизованного пользователя: {update.effective_user.id}")
+        return
+
+    await update.message.reply_text(
+        "🚀 Мониторинг DLMM пулов Meteora\n"
+        "Команды:\n"
+        "/filters - текущие настройки\n" 
+        "/setfilter - изменить параметры\n"
+        "/checkpools - проверить сейчас\n"
+        "/help - справка по командам"
+    )
+
+async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает текущие фильтры"""
+    if update.effective_user.id != USER_ID:
+        return
+
+    response = (
+        "⚙️ Текущие фильтры:\n"
+        f"• Bin Steps: {', '.join(map(str, current_filters['bin_steps']))}\n"
+        f"• Мин TVL: {current_filters['min_tvl']:,.2f} SOL\n"
+        f"• Мин комиссия: {current_filters['base_fee_min']}%\n"
+        f"• Макс комиссия: {current_filters['base_fee_max']}%\n"
+        f"• Мин объем (1ч): {current_filters['volume_1h_min']:,.2f} SOL\n"
+        f"• Мин объем (5м): {current_filters['volume_5m_min']:,.2f} SOL"
+    )
+    await update.message.reply_text(response)
+
+async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Изменяет параметры фильтров"""
+    if update.effective_user.id != USER_ID:
+        return
+
+    try:
+        args = context.args
+        if len(args) < 2:
+            await update.message.reply_text("Используйте: /setfilter [параметр] [значение]")
+            return
+
+        param = args[0].lower()
+        value = args[1]
+
+        if param == "bin_steps":
+            current_filters[param] = [int(v.strip()) for v in value.split(',')]
+        elif param in ["min_tvl", "base_fee_min", "base_fee_max", "volume_1h_min", "volume_5m_min"]:
+            current_filters[param] = float(value)
+        else:
+            await update.message.reply_text(f"Неизвестный параметр: {param}")
+            return
+
+        await save_filters(update, context)
+        await update.message.reply_text(f"✅ {param} обновлен: {value}")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
 @app.after_serving
 async def shutdown_app():
     """Корректно завершает работу бота"""
@@ -330,6 +389,19 @@ async def handle_pool_change(pool_data: bytes):
         
     except Exception as e:
         logger.error(f"Ошибка обработки пула {pool_data.get('address', 'unknown')}: {e}")
+
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик неизвестных команд"""
+    if update.effective_user.id != USER_ID:
+        return
+
+    await update.message.reply_text(
+        "❌ Неизвестная команда. Доступные команды:\n"
+        "/start - начать работу\n"
+        "/filters - показать фильтры\n"
+        "/setfilter - изменить фильтры\n"
+        "/checkpools - проверить пулы"
+    )
 
 async def save_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет фильтры в файл"""
