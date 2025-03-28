@@ -1,6 +1,5 @@
 import os
 import logging
-import sys
 import asyncio
 import json
 import httpx
@@ -739,11 +738,9 @@ async def webhook():
         # Обработка обновления с повторными попытками
         for attempt in range(WebhookConfig.MAX_RETRIES):
             try:
-                update = Update.de_json(data, application.bot)
-                await asyncio.wait_for(
-                    application.process_update(update),
-                    timeout=WebhookConfig.WEBHOOK_TIMEOUT
-                )
+                update = Update.de_json(await request.get_json(), application.bot)
+                await application.process_update(update)
+                
                 return '', 200
             except asyncio.TimeoutError:
                 if attempt == WebhookConfig.MAX_RETRIES - 1:

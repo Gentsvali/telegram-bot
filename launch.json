@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Bot",
+      "type": "python",
+      "request": "launch",
+      "program": "bot.py",
+      "env": {"TELEGRAM_TOKEN": "ваш_токен"},
+      "args": ["--webhook"]
+    }
+  ]
+}
