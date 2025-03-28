@@ -2,12 +2,10 @@ import os
 import logging
 import sys
 import asyncio
-import time
 import json
 import httpx
-import signal
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Union
+from datetime import datetime
+from typing import Dict, List, Optional
 
 # Веб-фреймворк
 from quart import Quart, request
@@ -25,18 +23,8 @@ from telegram.ext import (
     filters
 )
 
-# Solana импорты - обновленные                                                                                                                                                           
-from solana.rpc.async_api import AsyncClient
-from solana.rpc.core import RPCException as SolanaRpcException
-from solders.pubkey import Pubkey
-import base58
-import base64
-
-# Для работы с JSON
-from json import JSONDecodeError
-
 # Для работы с GitHub
-import aiohttp
+import base64
 
 # Настройка логгера
 logging.basicConfig(
@@ -52,7 +40,6 @@ logger = logging.getLogger(__name__)
 # Уменьшаем уровень логирования для сторонних библиотек
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
-logging.getLogger("solana").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 # Проверка наличия обязательных переменных окружения
@@ -82,69 +69,34 @@ USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 
-# Настройки Solana
-COMMITMENT = "confirmed"
-DLMM_PROGRAM_ID = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM Program ID
-
-# Дополнительные настройки
-DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+# Настройки DLMM
+DLMM_API_URL = "https://dlmm.meteora.ag/api/pools"
+DLMM_UPDATE_INTERVAL = 300  # 5 минут между обновлениями
 
 # Конфигурация фильтров по умолчанию
 DEFAULT_FILTERS = {
     "disable_filters": False,
-    "bin_steps": [20, 80, 100, 125, 250],  # Допустимые шаги корзин
-    "min_tvl": 10.0,  # Минимальный TVL (в SOL)
-    "base_fee_min": 0.1,  # Минимальная базовая комиссия (в %)
-    "base_fee_max": 10.0,  # Максимальная базовая комиссия (в %)
-    "volume_1h_min": 10.0,  # Минимальный объем за 1 час (в SOL)
-    "volume_5m_min": 1.0,  # Минимальный объем за 5 минут (в SOL)
-    "fee_tvl_ratio_24h_min": 0.1,  # Минимальное отношение комиссии к TVL за 24 часа (в %)
-    "dynamic_fee_tvl_ratio_min": 0.5,  # Минимальное отношение динамической комиссии к TVL (в %)
+    "bin_steps": [20, 80, 100, 125, 250],
+    "min_tvl": 10.0,
+    "base_fee_min": 0.1,
+    "base_fee_max": 10.0,
+    "volume_1h_min": 10.0,
+    "volume_5m_min": 1.0,
+    "fee_tvl_ratio_24h_min": 0.1,
+    "dynamic_fee_tvl_ratio_min": 0.5,
 }
-
-# Константы для работы с DLMM
-DLMM_CONFIG = {
-    "update_interval": 300,  # 5 минут между обновлениями
-    "pool_size": 165,  # Размер данных пула в байтах
-    "commitment": "confirmed",  # Уровень подтверждения транзакций
-    "retry_delay": 120,  # Задержка перед повторной попыткой при ошибке (в секундах)
-}
-
-# Проверка корректности фильтров
-def validate_filters(filters: dict) -> bool:
-    """
-    Проверяет корректность фильтров для DLMM пулов.
-    """
-    required_keys = [
-        "disable_filters",
-        "bin_steps",
-        "min_tvl",
-        "base_fee_min",
-        "base_fee_max", 
-        "volume_1h_min",
-        "volume_5m_min",
-        "fee_tvl_ratio_24h_min",
-        "dynamic_fee_tvl_ratio_min"
-    ]
-    return all(key in filters for key in required_keys)
-
-if not validate_filters(DEFAULT_FILTERS):
-    raise ValueError("Некорректная конфигурация фильтров по умолчанию.")
 
 # Текущие фильтры
 current_filters = DEFAULT_FILTERS.copy()
 
-# Хранение пулов и их состояний
+# Хранение состояния пулов
 class PoolState:
     def __init__(self):
-        self.last_checked_pools = set()  # Множество проверенных пулов
-        self.pool_data = {}  # Кэш данных пулов
-        self.last_update = {}  # Время последнего обновления
+        self.last_checked_pools = set()
+        self.pool_data = {}
+        self.last_update = {}
 
 pool_state = PoolState()
-
-# Инициализация клиента Solana
-solana_client = AsyncClient("https://api.mainnet-beta.solana.com")
 
 # Инициализация приложения Telegram
 application = (
@@ -162,20 +114,29 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     if update and isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
 
+async def fetch_dlmm_pools() -> List[Dict]:
+    """Получаем данные пулов через DLMM API"""
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(DLMM_API_URL)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        logger.error(f"Ошибка получения пулов: {e}")
+        return []
+
 async def load_filters(app=None):
     """Загружает фильтры из файла или использует значения по умолчанию"""
     global current_filters
     try:
-        # Сначала пробуем загрузить из локального файла
         if os.path.exists(FILE_PATH):
             with open(FILE_PATH, 'r') as f:
                 loaded = json.load(f)
-                if validate_filters(loaded):  # Проверяем валидность
+                if validate_filters(loaded):
                     current_filters.update(loaded)
                     logger.info("Фильтры загружены из файла")
                     return
         
-        # Если локальный файл не валиден, пробуем загрузить из GitHub
         if GITHUB_TOKEN:
             try:
                 url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
@@ -188,7 +149,6 @@ async def load_filters(app=None):
                         loaded = json.loads(content)
                         if validate_filters(loaded):
                             current_filters.update(loaded)
-                            # Сохраняем локально для будущих загрузок
                             with open(FILE_PATH, 'w') as f:
                                 json.dump(loaded, f, indent=4)
                             logger.info("Фильтры загружены из GitHub")
@@ -196,13 +156,27 @@ async def load_filters(app=None):
             except Exception as github_error:
                 logger.warning(f"Ошибка загрузки из GitHub: {github_error}")
 
-        # Если ничего не получилось, используем значения по умолчанию
         current_filters = DEFAULT_FILTERS.copy()
         logger.info("Используются фильтры по умолчанию")
         
     except Exception as e:
         current_filters = DEFAULT_FILTERS.copy()
         logger.error(f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию")
+
+def validate_filters(filters: dict) -> bool:
+    """Проверяет корректность фильтров для DLMM пулов."""
+    required_keys = [
+        "disable_filters",
+        "bin_steps",
+        "min_tvl",
+        "base_fee_min",
+        "base_fee_max", 
+        "volume_1h_min",
+        "volume_5m_min",
+        "fee_tvl_ratio_24h_min",
+        "dynamic_fee_tvl_ratio_min"
+    ]
+    return all(key in filters for key in required_keys)
 
 # Регистрируем обработчик ошибок
 application.add_error_handler(error_handler)
@@ -214,20 +188,9 @@ app = Quart(__name__)
 async def startup():
     """Запуск приложения с улучшенной обработкой ошибок"""
     try:
-        # 1. Проверка подключения к Solana
-        logger.info("🔌 Проверяем подключение к Solana...")
-        try:
-            await solana_client.is_connected()
-            logger.info("✅ Подключение к Solana работает")
-        except Exception as e:
-            logger.error(f"❌ Ошибка подключения к Solana: {e}")
-            raise
-
-        # 2. Загрузка фильтров
         logger.info("📥 Загрузка фильтров...")
         await load_filters()
         
-        # 3. Инициализация бота
         await application.initialize()
         await application.start()
         await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
@@ -241,17 +204,10 @@ async def startup():
 
 @app.after_serving
 async def shutdown_app():
-    """
-    Корректно завершает работу бота и освобождает ресурсы.
-    """
+    """Корректно завершает работу бота"""
     try:
         logger.info("Завершение работы приложения...")
         
-        # Закрываем подключение к Solana
-        await solana_client.close()
-        logger.info("Подключение к Solana закрыто")
-        
-        # Останавливаем бота
         if application.running:
             await application.stop()
             await application.shutdown()
@@ -261,12 +217,6 @@ async def shutdown_app():
             
     except Exception as e:
         logger.error(f"Ошибка при завершении работы: {e}")
-
-async def fetch_meteora_pools(tvl_min=1000):
-    url = f"https://dlmm.meteora.ag/api/pools?tvlMin={tvl_min}"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        return response.json()  # Готовые данные в JSON
 
 async def send_pool_alert(pool: dict):
     """Отправляет уведомление о новом пуле в Telegram."""
@@ -282,152 +232,65 @@ async def send_pool_alert(pool: dict):
     except Exception as e:
         logger.error(f"Ошибка при отправке уведомления: {e}")
 
-# Основные обработчики команд
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Обрабатывает команду /start и выводит приветственное сообщение.
-    """
-    if update.effective_user.id != USER_ID:
-        logger.warning(f"Попытка доступа от неавторизованного пользователя: {update.effective_user.id}")
-        return
+def filter_pool(pool: dict) -> bool:
+    """Фильтрует DLMM пул на основе текущих фильтров."""
+    if current_filters.get("disable_filters", False):
+        return True
 
     try:
-        await update.message.reply_text(
-            "🚀 Мониторинг DLMM пулов Meteora\n"
-            "Команды:\n"
-            "/filters - текущие настройки\n" 
-            "/setfilter - изменить параметры\n"
-            "/checkpools - проверить сейчас\n"
-            "/help - справка по командам"
+        conditions = [
+            pool.get("bin_step") in current_filters["bin_steps"],
+            current_filters["base_fee_min"] <= pool.get("fee", 0) <= current_filters["base_fee_max"],
+            pool.get("tvl", 0) >= current_filters["min_tvl"],
+            pool.get("volume_1h", 0) >= current_filters["volume_1h_min"],
+            pool.get("volume_5m", 0) >= current_filters["volume_5m_min"],
+            pool.get("fee_tvl_ratio_24h", 0) >= current_filters["fee_tvl_ratio_24h_min"],
+            pool.get("dynamic_fee_tvl_ratio", 0) >= current_filters["dynamic_fee_tvl_ratio_min"],
+        ]
+
+        return all(conditions)
+    except Exception as e:
+        logger.error(f"Ошибка фильтрации пула: {e}")
+        return False
+
+def format_pool_message(pool: dict) -> str:
+    """Форматирует информацию о пуле в сообщение для Telegram"""
+    try:
+        return (
+            f"⭐️ {pool.get('token_x_symbol', '?')}-{pool.get('token_y_symbol', '?')} "
+            f"(https://dexscreener.com/solana/{pool.get('address', '')})\n"
+            f"☄️ Метеоры (https://edge.meteora.ag/dlmm/{pool.get('address', '')})\n"
+            f"🟢 ТВЛ - {pool.get('tvl', 0):,.2f} SOL\n"
+            f"📊 Объем (1ч) - {pool.get('volume_1h', 0):,.2f} SOL\n"
+            f"📊 Объем (5м) - {pool.get('volume_5m', 0):,.2f} SOL\n"
+            f"⚙️ Шаг корзины - {pool.get('bin_step', 'N/A')}\n"
+            f"💸 Комиссия - {pool.get('fee', 0):.2f}%\n"
+            f"📈 Изменение цены (1ч) - {pool.get('price_change_1h', 0):.2f}%\n"
+            f"📈 Изменение цены (5м) - {pool.get('price_change_5m', 0):.2f}%"
         )
-        logger.info(f"Пользователь {update.effective_user.id} запустил бота")
     except Exception as e:
-        logger.error(f"Ошибка при обработке команды /start: {e}", exc_info=True)
-        await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
-
-async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Обрабатывает команду /filters и выводит текущие настройки фильтров.
-    """
-    if update.effective_user.id != USER_ID:
-        logger.warning(f"Попытка доступа от неавторизованного пользователя: {update.effective_user.id}")
-        return
-
-    try:
-        response = (
-            "⚙️ Текущие фильтры:\n"
-            f"• Bin Steps: {', '.join(map(str, current_filters['bin_steps']))}\n"
-            f"• Мин TVL: {current_filters['min_tvl']:,.2f} SOL\n"
-            f"• Мин базовая комиссия: {current_filters['base_fee_min']}%\n"
-            f"• Макс базовая комиссия: {current_filters['base_fee_max']}%\n"
-            f"• Мин объем (1ч): {current_filters['volume_1h_min']:,.2f} SOL\n"
-            f"• Мин объем (5м): {current_filters['volume_5m_min']:,.2f} SOL\n"
-            f"• Мин комиссия/TVL 24ч: {current_filters['fee_tvl_ratio_24h_min']}%\n"
-            f"• Мин динамическая комиссия/TVL: {current_filters['dynamic_fee_tvl_ratio_min']}%"
-        )
-        await update.message.reply_text(response)
-        logger.info(f"Пользователь {update.effective_user.id} запросил текущие фильтры")
-    except Exception as e:
-        logger.error(f"Ошибка при обработке команды /filters: {e}", exc_info=True)
-        await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
-
-async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Обрабатывает команду /setfilter и обновляет указанный параметр фильтра.
-    """
-    if update.effective_user.id != USER_ID:
-        logger.warning(f"Попытка доступа от неавторизованного пользователя: {update.effective_user.id}")
-        return
-
-    try:
-        args = context.args
-        if len(args) < 2:
-            raise ValueError("Используйте: /setfilter [параметр] [значение]")
-
-        param = args[0].lower()
-        value = args[1]
-
-        # Обработка параметров
-        if param == "bin_steps":
-            current_filters[param] = [int(v.strip()) for v in value.split(',')]
-        
-        elif param in ["min_tvl", "base_fee_min", "base_fee_max", 
-                      "fee_tvl_ratio_24h_min", "volume_1h_min", 
-                      "volume_5m_min", "dynamic_fee_tvl_ratio_min"]:
-            current_filters[param] = float(value)
-        
-        else:
-            raise ValueError(f"Неизвестный параметр: {param}")
-
-        # Сохраняем фильтры
-        await save_filters(update, context)
-        await update.message.reply_text(f"✅ {param} обновлен: {value}")
-        logger.info(f"Пользователь {update.effective_user.id} обновил параметр {param} на {value}")
-    
-    except ValueError as e:
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-        logger.warning(f"Ошибка при обновлении фильтра: {e}")
-    except Exception as e:
-        await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
-        logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
+        logger.error(f"Ошибка форматирования сообщения: {e}")
+        return None
 
 async def track_dlmm_pools():
-    """Основная функция мониторинга пулов."""
+    """Основная функция мониторинга пулов"""
     while True:
         try:
-            pools = await fetch_meteora_pools(tvl_min=current_filters["min_tvl"])
+            pools = await fetch_dlmm_pools()
+            if not pools:
+                logger.warning("Не удалось получить данные пулов")
+                await asyncio.sleep(60)
+                continue
+
             for pool in pools:
-                if pool["fee"] >= current_filters["base_fee_min"]:
+                if filter_pool(pool):
                     await send_pool_alert(pool)
-            await asyncio.sleep(300)  # Проверка каждые 5 минут
+
+            await asyncio.sleep(DLMM_UPDATE_INTERVAL)
+
         except Exception as e:
             logger.error(f"Ошибка мониторинга пулов: {e}")
             await asyncio.sleep(60)
-
-def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
-    """Улучшенная версия с сохранением вашей логики"""
-    try:
-        # Конвертируем в bytes если нужно
-        if isinstance(data, str):
-            data = base64.b64decode(data)
-        elif not isinstance(data, bytes):
-            raise ValueError(f"Неподдерживаемый тип данных: {type(data)}")
-
-        # Ваша оригинальная логика декодирования
-        if len(data) < DLMM_CONFIG["pool_size"]:
-            logger.error(f"Некорректный размер данных: {len(data)} байт")
-            return None
-            
-        decoded_data = {
-            "mint_x": base58.b58encode(data[:32]).decode(),
-            "mint_y": base58.b58encode(data[32:64]).decode(),
-            "liquidity": int.from_bytes(data[64:72], "little"),
-            "volume_1h": int.from_bytes(data[72:80], byteorder="little"),                                                                                                                                                        
-            "volume_5m": int.from_bytes(data[80:88], byteorder="little"),
-            
-            # Параметры пула
-            "bin_step": int.from_bytes(data[88:90], byteorder="little"),
-            "base_fee": int.from_bytes(data[90:92], byteorder="little") / 10000,  # Конвертируем в проценты
-            
-            # Расчетные показатели
-            "fee_tvl_ratio_24h": int.from_bytes(data[92:100], byteorder="little") / 10000,
-            "dynamic_fee_tvl_ratio": int.from_bytes(data[100:108], byteorder="little") / 10000,
-            
-            # Конвертируем значения в SOL
-            "tvl_sol": int.from_bytes(data[64:72], byteorder="little") / 1e9,
-            "volume_1h_sol": int.from_bytes(data[72:80], byteorder="little") / 1e9,
-            "volume_5m_sol": int.from_bytes(data[80:88], byteorder="little") / 1e9,
-        }
-
-        # Проверяем валидность декодированных данных
-        if not all(v is not None for v in decoded_data.values()):
-            raise ValueError("Обнаружены пустые значения в декодированных данных")
-
-        return decoded_data
-
-    except Exception as e:
-        logger.error(f"Ошибка декодирования данных пула: {e}", exc_info=True)
-        return {}
 
 async def handle_pool_change(pool_data: bytes):
     """Обработка изменений пула с проверкой структуры данных"""
@@ -917,13 +780,7 @@ async def startup_sequence():
 
 if __name__ == "__main__":
     try:
-        # Запускаем последовательность запуска
-        if asyncio.run(startup_sequence()):
-            logger.info(f"🚀 Запускаем сервер на порту {PORT}...")
-            app.run(host='0.0.0.0', port=PORT)
-        else:
-            logger.error("❌ Ошибка при запуске приложения")
-            sys.exit(1)
+        app.run(host='0.0.0.0', port=PORT)
     except Exception as e:
         logger.error(f"💥 Критическая ошибка: {e}")
-        sys.exit(1) 
+        sys.exit(1)
