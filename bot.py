@@ -842,9 +842,3 @@ async def startup_sequence():
         logger.error(f"💥 Критическая ошибка при запуске: {e}")
         return False
 
-if __name__ == "__main__":
-    try:
-        app.run(host='0.0.0.0', port=PORT)
-    except Exception as e:
-        logger.error(f"💥 Критическая ошибка: {e}")
-        sys.exit(1)
