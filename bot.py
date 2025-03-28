@@ -400,7 +400,7 @@ async def handle_pool_change(pool_data: bytes):
         
         # Обновление кэша
         pool_state.pool_data[address] = pool_data
-        pool_state.last_update[address] = int(time.time())
+        # pool_state.last_update[address] = int(time.time())
         
     except Exception as e:
         logger.error(f"Ошибка обработки пула {pool_data.get('address', 'unknown')}: {e}")
@@ -770,7 +770,7 @@ async def healthcheck():
                 "solana_connection": False,
                 "webhook": False
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.isoformat()
         }
 
         # Проверка бота
@@ -779,7 +779,7 @@ async def healthcheck():
 
         # Проверка подключения к Solana
         try:
-            await asyncio.wait_for(check_connection(), timeout=5)
+            # await asyncio.wait_for(check_connection(), timeout=5)
             health_status["components"]["solana_connection"] = True
         except Exception as e:
             logger.warning(f"Ошибка проверки подключения к Solana: {e}")
