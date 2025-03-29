@@ -6,14 +6,12 @@ import json
 import httpx
 from datetime import datetime
 from typing import Dict, List, Optional
-
-# Веб-фреймворк
 from quart import Quart, request
-
-# Загрузка переменных окружения
+from solana.rpc.async_api import AsyncClient
+from solders.pubkey import Pubkey
+from solders.signature import Signature
 from dotenv import load_dotenv
 load_dotenv()
-
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, 
@@ -70,8 +68,10 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
 
 # Настройки DLMM
-DLMM_API_URL = "https://dlmm.meteora.ag/api/pools"
-DLMM_UPDATE_INTERVAL = 300  # 5 минут между обновлениями
+DLMM_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+RPC_URL = "https://api.mainnet-beta.solana.com"
+POLL_INTERVAL = 300  # 5 минут
+pool_tracker = None
 
 # Конфигурация фильтров по умолчанию
 DEFAULT_FILTERS = {
@@ -89,32 +89,15 @@ DEFAULT_FILTERS = {
 # Текущие фильтры
 current_filters = DEFAULT_FILTERS.copy()
 
-# Хранение состояния пулов
-class PoolState:
-    def __init__(self):
-        self.last_checked_pools = set()
-        self.pool_data = {}
-        self.last_update = {}
-
-pool_state = PoolState()
-
 # Инициализация приложения Telegram
-application = (
-    ApplicationBuilder()
-    .token(TELEGRAM_TOKEN)
-    .concurrent_updates(True)
-    .http_version("1.1")
-    .get_updates_http_version("1.1")
-    .build()
-)
-
-async def check_internet_connection():
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.get("https://google.com", timeout=5)
-        return True
-    except:
-        return False
+async def setup_bot():
+    # Ваша существующая инициализация
+    application = (
+        ApplicationBuilder()
+        .token(os.getenv("TELEGRAM_TOKEN"))
+        .concurrent_updates(True)
+        .build()
+    )
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик ошибок бота."""
@@ -210,6 +193,12 @@ async def startup():
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
     logger.info("Bot initialized and webhook set")
 
+  global pool_tracker
+    pool_tracker = PoolTracker()
+    asyncio.create_task(pool_tracker.start_tracking())
+    
+    logger.info("Bot initialized and webhook set")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     if update.effective_user.id != USER_ID:
@@ -268,6 +257,22 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+
+async def start_pool_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для запуска мониторинга"""
+    if update.effective_user.id != USER_ID:
+        return
+    
+    asyncio.create_task(pool_tracker.start_tracking())
+    await update.message.reply_text("Мониторинг DLMM пулов запущен")
+
+async def stop_pool_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для остановки мониторинга"""
+    if update.effective_user.id != USER_ID:
+        return
+    
+    await pool_tracker.stop_tracking()
+    await update.message.reply_text("Мониторинг DLMM пулов остановлен")
 
 @app.after_serving
 async def shutdown_app():
@@ -628,6 +633,70 @@ async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка проверки пулов: {e}")
         await update.message.reply_text("❌ Ошибка при проверке пулов")
 
+class PoolTracker:
+    def __init__(self):
+        self.last_signature = None
+        self.known_pools = set()
+        self.running = False
+
+    async def start_tracking(self):
+        """Запуск мониторинга новых пулов"""
+        if self.running:
+            return
+            
+        self.running = True
+        logger.info("Запуск мониторинга DLMM пулов...")
+        
+        while self.running:
+            try:
+                async with AsyncClient(SOLANA_RPC_URL) as client:
+                    # Получаем последние транзакции
+                    signatures = (await client.get_signatures_for_address(
+                        DLMM_PROGRAM_ID,
+                        before=self.last_signature,
+                        limit=5,
+                        commitment="confirmed"
+                    )).value
+
+                    if signatures:
+                        self.last_signature = signatures[0].signature
+                        logger.info(f"Найдено новых транзакций: {len(signatures)}")
+                        
+                        for sig in signatures:
+                            await self.process_transaction(client, sig.signature)
+
+            except Exception as e:
+                logger.error(f"Ошибка мониторинга: {str(e)}")
+            
+            await asyncio.sleep(300)  # Проверка каждые 5 минут
+
+    async def process_transaction(self, client, signature):
+        """Анализ транзакции"""
+        try:
+            tx = await client.get_transaction(
+                signature,
+                encoding="jsonParsed",
+                max_supported_transaction_version=0
+            )
+            
+            if not tx.value:
+                return
+
+            # Логируем базовую информацию
+            logger.info(f"Транзакция: {signature}")
+            logger.info(f"Блок: {tx.value.slot}")
+            logger.info(f"Дата: {tx.value.block_time}")
+
+            # Здесь можно добавить более детальный анализ
+
+        except Exception as e:
+            logger.warning(f"Ошибка обработки транзакции: {str(e)}")
+
+    async def stop_tracking(self):
+        """Остановка мониторинга"""
+        self.running = False
+        logger.info("Мониторинг DLMM пулов остановлен")
+
 def setup_command_handlers(application):
     """
     Настраивает обработчики команд для бота с группировкой по функциональности.
@@ -668,13 +737,9 @@ def setup_command_handlers(application):
             application.add_handler(handler)
 
         # Команды мониторинга
-        application.add_handler(
-            CommandHandler(
-                "checkpools", 
-                check_new_pools,
-                filters=filters.User(user_id=USER_ID)
-            )
-        )
+        application.add_handler(CommandHandler("trackpools", start_pool_tracking))
+
+        application.add_handler(CommandHandler("stoptracking", stop_pool_tracking))
 
         # Обработчик неизвестных команд
         application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
@@ -829,6 +894,17 @@ async def startup_sequence():
         logger.error(f"💥 Критическая ошибка при запуске: {e}")
         return False
         
-if __name__ == '__main__':
-    # Только для локального тестирования
-    app.run(host='0.0.0.0', port=PORT)
+if __name__ == "__main__":
+    app = Quart(__name__)
+
+    @app.before_serving
+    async def startup():
+        logger.info("Запуск бота...")
+        await setup_bot()
+
+    @app.route(f'/{os.getenv("TELEGRAM_TOKEN")}', methods=['POST'])
+    async def webhook():
+        # Ваша существующая логика вебхука
+        pass
+
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
