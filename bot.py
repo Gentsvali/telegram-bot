@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import asyncio
 import json
@@ -828,14 +829,10 @@ async def startup_sequence():
         logger.error(f"💥 Критическая ошибка при запуске: {e}")
         return False
         
- if __name__ == '__main__':
-    # Для локального тестирования
+if __name__ == '__main__':
+    # Локальный запуск для разработки
     app.run(host='0.0.0.0', port=PORT)
 else:
-    # Для production (Hypercorn/Gunicorn)
-    from hypercorn.asyncio import serve
-    from hypercorn.config import Config
-    
-    config = Config()
-    config.bind = [f"0.0.0.0:{PORT}"]
-    asyncio.run(serve(app, config))
+    # Production-режим (для Gunicorn/Hypercorn)
+    # Ничего не делаем - Quart автоматически создаст ASGI-приложение
+    pass
