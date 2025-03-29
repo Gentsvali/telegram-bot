@@ -830,9 +830,5 @@ async def startup_sequence():
         return False
         
 if __name__ == '__main__':
-    # Локальный запуск для разработки
+    # Только для локального тестирования
     app.run(host='0.0.0.0', port=PORT)
-else:
-    # Production-режим (для Gunicorn/Hypercorn)
-    # Ничего не делаем - Quart автоматически создаст ASGI-приложение
-    pass

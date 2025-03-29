@@ -1,1 +1,1 @@
-web: python -m quart --app bot:app run --host 0.0.0.0 --port $PORT
+web: hypercorn bot:app --bind 0.0.0.0:$PORT
