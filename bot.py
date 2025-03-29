@@ -203,15 +203,11 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup():
-    try:
-        webhook_info = await application.bot.get_webhook_info()
-        logger.info(f"Текущий вебхук: {webhook_info.url}")
-        
-        await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
-        logger.info("Вебхук успешно установлен")
-    except Exception as e:
-        logger.error(f"Ошибка настройки вебхука: {e}")
-        raise
+    logger.info("Starting initialization...")
+    await application.initialize()  # Важно: сначала инициализация
+    await application.start()
+    await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+    logger.info("Bot initialized and webhook set")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -717,43 +713,16 @@ class WebhookConfig:
 # Вебхук с улучшенной обработкой ошибок
 @app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
 async def webhook():
-    """Обрабатывает входящие запросы от Telegram через вебхук с расширенной валидацией."""
+    if not application.running:
+        return "Bot not initialized", 503
+        
     try:
-        # Проверка заголовков
-        if not request.is_json:
-            logger.error("Получен не JSON запрос")
-            return {'error': 'Content-Type должен быть application/json'}, 400
-
-        # Получение и валидация данных
-        data = await request.get_json()
-        if not data:
-            logger.error("Получен пустой JSON")
-            return {'error': 'Пустой JSON запрос'}, 400
-
-        # Проверка критических полей
-        if 'update_id' not in data:
-            logger.error("Отсутствует update_id в запросе")
-            return {'error': 'Некорректный формат данных'}, 400
-
-        # Обработка обновления с повторными попытками
-        for attempt in range(WebhookConfig.MAX_RETRIES):
-            try:
-                update = Update.de_json(await request.get_json(), application.bot)
-                await application.process_update(update)
-                
-                return '', 200
-            except asyncio.TimeoutError:
-                if attempt == WebhookConfig.MAX_RETRIES - 1:
-                    raise
-                await asyncio.sleep(WebhookConfig.RETRY_DELAY)
-                continue
-
-    except asyncio.TimeoutError:
-        logger.error("Таймаут обработки вебхука")
-        return {'error': 'Timeout'}, 504
+        update = Update.de_json(await request.get_json(), application.bot)
+        await application.update_queue.put(update)  # Используем очередь обновлений
+        return '', 200
     except Exception as e:
-        logger.error(f"Ошибка в вебхуке: {e}", exc_info=True)
-        return {'error': 'Internal server error'}, 500
+        logger.error(f"Webhook error: {e}")
+        return "Error", 500
 
 # Расширенный healthcheck
 @app.route('/healthcheck')
@@ -825,6 +794,15 @@ async def home():
 
 # Улучшенный запуск приложения
 async def startup_sequence():
+    """Улучшенная последовательность запуска с обработкой ошибок"""
+    try:
+        # 1. Проверка подключения к интернету
+        logger.info("🌐 Проверка интернет-соединения...")
+        if not await check_internet_connection():
+            logger.error("❌ Нет интернет-соединения")
+            return False
+        logger.info("✅ Интернет-соединение активно")
+
         # 2. Загрузка фильтров
         logger.info("📥 Загрузка фильтров...")
         try:
@@ -841,15 +819,23 @@ async def startup_sequence():
             await application.start()
             await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
             logger.info("✅ Бот успешно инициализирован")
+            return True
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации бота: {e}")
             return False
 
-            return True
-
-        except Exception as e:
-            logger.error(f"💥 Критическая ошибка при запуске: {e}")
-            return False
+    except Exception as e:
+        logger.error(f"💥 Критическая ошибка при запуске: {e}")
+        return False
         
-        if __name__ == '__main__':
-            app.run()
+ if __name__ == '__main__':
+    # Для локального тестирования
+    app.run(host='0.0.0.0', port=PORT)
+else:
+    # Для production (Hypercorn/Gunicorn)
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config
+    
+    config = Config()
+    config.bind = [f"0.0.0.0:{PORT}"]
+    asyncio.run(serve(app, config))
