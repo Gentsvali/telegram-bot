@@ -513,6 +513,8 @@ class FilterManager:
 # Создаем глобальный экземпляр менеджера фильтров
 filter_manager = FilterManager()
 
+setup_bot_handlers(application, filter_manager)
+
 def setup_bot_handlers(app, fm):
     """Настройка всех обработчиков бота"""
     
