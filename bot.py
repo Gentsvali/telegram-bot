@@ -130,7 +130,12 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+application = (
+    ApplicationBuilder()
+    .token(TELEGRAM_TOKEN)
+    .updater(None)  # Отключаем polling, т.к. используем webhook
+    .build()
+)
 
 class SolanaClient:
     def __init__(self):
@@ -814,8 +819,16 @@ class WebhookServer:
         async def startup():
             """Инициализация при запуске"""
             try:
+                # 1. Сначала инициализируем Telegram приложение
+                await application.initialize()
+        
+                # 2. Затем инициализируем Solana клиент и загружаем фильтры
                 if not await init_monitoring():
                     raise Exception("Ошибка инициализации мониторинга")
+            
+                # 3. Устанавливаем webhook
+                await application.bot.set_webhook(url=WEBHOOK_URL)
+        
                 logger.info("🚀 Сервер успешно запущен")
             except Exception as e:
                 logger.error(f"Критическая ошибка при запуске: {e}")
