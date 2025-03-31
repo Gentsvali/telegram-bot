@@ -707,6 +707,7 @@ async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 class PoolTracker:
+
 pool_tracker = pool_tracker()
 
     def __init__(self):
