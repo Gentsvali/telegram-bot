@@ -707,9 +707,6 @@ async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 class PoolTracker:
-
-pool_tracker = pool_tracker()
-
     def __init__(self):
         self.last_signature = None
         self.known_pools = set()
@@ -745,6 +742,9 @@ pool_tracker = pool_tracker()
 
             except Exception as e:
                 logger.error(f"Ошибка мониторинга: {str(e)}")
+
+# Создание экземпляра класса должно быть ВНЕ класса
+tracker = PoolTracker()  # Правильное создание экземпляра
 
             await asyncio.sleep(300)  # Проверка каждые 5 минут
 
