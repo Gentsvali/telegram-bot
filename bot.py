@@ -519,9 +519,9 @@ class CommandHandler:
     def __init__(self, application, filter_manager):
         self.application = application
         self.filter_manager = filter_manager
-        self.setup_handlers()
+        self._setup_handlers()  # Переименовали метод, чтобы избежать рекурсии
 
-    def setup_handlers(self):
+    def _setup_handlers(self):  # Изменили название метода
         """Настройка обработчиков команд"""
         handlers = [
             CommandHandler("start", self.start_command),
