@@ -639,7 +639,7 @@ def setup_bot_handlers(app, fm):
 
     # Добавляем обработчики
     handlers = [
-        CommandHandler(["start", "начало"], start),
+        CommandHandler("start", start),
         CommandHandler("filters", show_filters),
         CommandHandler("setfilter", set_filter),
         CommandHandler("checkpools", check_pools),
