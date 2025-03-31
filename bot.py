@@ -513,96 +513,43 @@ class FilterManager:
 # Создаем глобальный экземпляр менеджера фильтров
 filter_manager = FilterManager()
 
-class CommandHandler:
-    """Обработчик команд с улучшенной валидацией и обработкой ошибок"""
+def setup_bot_handlers(app, fm):
+    """Настройка всех обработчиков бота"""
     
-    def __init__(self, application, filter_manager):
-        self.application = application
-        self.filter_manager = filter_manager
-        self._register_handlers()  # Новое название метода для ясности
-
-    def _register_handlers(self):
-        """Регистрация обработчиков команд без рекурсии"""
-        # Создаем список обработчиков
-        handlers = [
-            CommandHandler("start", self._start_command_wrapper),
-            CommandHandler("начало", self._start_command_wrapper),
-            CommandHandler("filters", self._show_filters_wrapper),
-            CommandHandler("setfilter", self._set_filter_wrapper),
-            CommandHandler("checkpools", self._check_pools_wrapper),
-            CommandHandler("getfiltersjson", self._get_filters_json_wrapper),
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND & filters.User(user_id=USER_ID),
-                self._handle_json_update_wrapper
-            )
-        ]
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != USER_ID:
+            return
         
-        # Регистрируем все обработчики
-        for handler in handlers:
-            self.application.add_handler(handler)
+        text = (
+            "🚀 Бот мониторинга DLMM пулов\n\n"
+            "Доступные команды:\n"
+            "/start или /начало - это сообщение\n"
+            "/filters - текущие настройки\n"
+            "/setfilter - изменить фильтры\n"
+            "/checkpools - проверить пулы\n"
+            "/getfiltersjson - получить фильтры"
+        )
+        await update.message.reply_text(text)
 
-    # Обертки для обработчиков команд
-    async def _start_command_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.start_command(update, context)
-    
-    async def _show_filters_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.show_filters(update, context)
-    
-    async def _set_filter_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.set_filter(update, context)
-    
-    async def _check_pools_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.check_pools(update, context)
-    
-    async def _get_filters_json_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.get_filters_json(update, context)
-    
-    async def _handle_json_update_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.handle_json_update(update, context)
+    async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        filters = fm.current_filters
+        text = (
+            f"⚙️ Текущие фильтры:\n\n"
+            f"• Bin Steps: {', '.join(map(str, filters['bin_steps']))}\n"
+            f"• Мин TVL: {filters['min_tvl']} SOL\n"
+            f"• Базовая комиссия: {filters['base_fee_min']}%-{filters['base_fee_max']}%"
+        )
+        await update.message.reply_text(text)
 
-    # Оригинальные методы обработчиков (остаются без изменений)
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /start"""
-        if update.effective_user.id != USER_ID:
-            return
-
-        try:
-            welcome_message = (
-                "🚀 Мониторинг DLMM пулов Meteora\n\n"
-                "Доступные команды:\n"
-                "/start или /начало - показать это сообщение\n"
-                "/filters - показать текущие настройки\n"
-                "/setfilter - изменить параметр фильтра\n"
-                "/checkpools - проверить пулы сейчас\n"
-                "/getfiltersjson - получить фильтры в JSON формате"
-            )
-            await update.message.reply_text(welcome_message)
-            logger.info(f"Пользователь {update.effective_user.id} запустил бота")
-        except Exception as e:
-            logger.error(f"Ошибка в команде start: {e}")
-            await self.send_error_message(update)
-
-    async def show_filters(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Показывает текущие фильтры"""
-        if update.effective_user.id != USER_ID:
-            return
-
-        try:
-            filters = self.filter_manager.current_filters
-            response = (
-                "⚙️ Текущие фильтры:\n\n"
-                f"• Bin Steps: {', '.join(map(str, filters['bin_steps']))}\n"
-                f"• Мин TVL: {filters['min_tvl']:,.2f} SOL\n"
-                f"• Базовая комиссия: {filters['base_fee_min']}% - {filters['base_fee_max']}%\n"
-                f"• Мин объем (1ч): {filters['volume_1h_min']:,.2f} SOL\n"
-                f"• Мин объем (5м): {filters['volume_5m_min']:,.2f} SOL\n"
-                f"• Мин комиссия/TVL (24ч): {filters['fee_tvl_ratio_24h_min']}%\n"
-                f"• Мин дин. комиссия/TVL: {filters['dynamic_fee_tvl_ratio_min']}%"
-            )
-            await update.message.reply_text(response)
-        except Exception as e:
-            logger.error(f"Ошибка при показе фильтров: {e}")
-            await self.send_error_message(update)
+    # Добавляем обработчики
+    handlers = [
+        CommandHandler(["start", "начало"], start),
+        CommandHandler("filters", show_filters),
+        # Можно добавить другие обработчики здесь
+    ]
+    
+    for handler in handlers:
+        app.add_handler(handler)
 
     async def set_filter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Установка значения фильтра"""
@@ -700,8 +647,6 @@ class CommandHandler:
         except Exception as e:
             logger.error(f"Ошибка отправки сообщения об ошибке: {e}")
 
-# Инициализация обработчика команд
-command_handler = CommandHandler(application, filter_manager)
 
 class PoolMonitor:
     """Монитор пулов с улучшенной обработкой ошибок и производительностью"""
@@ -980,7 +925,8 @@ class WebhookServer:
             logger.error(f"Ошибка запуска сервера: {e}")
             raise
 
-# Создание и запуск сервера
+setup_bot_handlers(application, filter_manager)# Создание и запуск сервера
+
 webhook_server = WebhookServer(application, pool_monitor, filter_manager)
 
 if __name__ == "__main__":
