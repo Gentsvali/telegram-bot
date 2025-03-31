@@ -1,5 +1,3 @@
-from cmath import e
-from email.mime import application
 import os
 import sys
 import logging
@@ -90,14 +88,15 @@ current_filters = DEFAULT_FILTERS.copy()
 
 # Инициализация приложения Telegram
 async def setup_bot():
-    # Ваша существующая инициализация
     application = (
         ApplicationBuilder()
         .token(os.getenv("TELEGRAM_TOKEN"))
         .concurrent_updates(True)
         .build()
     )
-
+    application.add_error_handler(error_handler)
+    setup_command_handlers(application)
+    return application
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик ошибок бота."""
@@ -182,9 +181,6 @@ async def startup():
     logger.info("Bot initialized and webhook set")
 
     global pool_tracker
-
-
-pool_tracker = pool_tracker()
 
 asyncio.create_task(pool_tracker.start_tracking())
 
@@ -711,6 +707,8 @@ async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 class PoolTracker:
+pool_tracker = pool_tracker()
+
     def __init__(self):
         self.last_signature = None
         self.known_pools = set()
