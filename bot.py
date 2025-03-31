@@ -541,19 +541,7 @@ def setup_bot_handlers(app, fm):
         )
         await update.message.reply_text(text)
 
-    # Добавляем обработчики
-    handlers = [
-        CommandHandler(["start", "начало"], start),
-        CommandHandler("filters", show_filters),
-        # Можно добавить другие обработчики здесь
-    ]
-    
-    for handler in handlers:
-        app.add_handler(handler)
-
-setup_bot_handlers(application, filter_manager)
-
-    async def set_filter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Установка значения фильтра"""
         if update.effective_user.id != USER_ID:
             return
@@ -570,7 +558,7 @@ setup_bot_handlers(application, filter_manager)
             param = args[0].lower()
             value = args[1]
 
-            if param not in self.filter_manager.current_filters:
+            if param not in fm.current_filters:
                 await update.message.reply_text(f"❌ Неизвестный параметр: {param}")
                 return
 
@@ -583,8 +571,8 @@ setup_bot_handlers(application, filter_manager)
                 else:
                     new_value = float(value)
 
-                self.filter_manager.current_filters[param] = new_value
-                await self.filter_manager.save_filters(self.filter_manager.current_filters)
+                fm.current_filters[param] = new_value
+                await fm.save_filters(fm.current_filters)
                 await update.message.reply_text(f"✅ {param} обновлен: {new_value}")
 
             except ValueError:
@@ -592,9 +580,9 @@ setup_bot_handlers(application, filter_manager)
 
         except Exception as e:
             logger.error(f"Ошибка установки фильтра: {e}")
-            await self.send_error_message(update)
+            await send_error_message(update)
 
-    async def check_pools(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def check_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Ручная проверка пулов"""
         if update.effective_user.id != USER_ID:
             return
@@ -605,32 +593,32 @@ setup_bot_handlers(application, filter_manager)
             await message.edit_text("✅ Проверка завершена")
         except Exception as e:
             logger.error(f"Ошибка проверки пулов: {e}")
-            await self.send_error_message(update)
+            await send_error_message(update)
 
-    async def get_filters_json(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def get_filters_json(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Получение фильтров в формате JSON"""
         if update.effective_user.id != USER_ID:
             return
 
         try:
-            filters_json = json.dumps(self.filter_manager.current_filters, indent=2)
+            filters_json = json.dumps(fm.current_filters, indent=2)
             await update.message.reply_text(
                 f"```json\n{filters_json}\n```",
                 parse_mode="Markdown"
             )
         except Exception as e:
             logger.error(f"Ошибка получения JSON фильтров: {e}")
-            await self.send_error_message(update)
+            await send_error_message(update)
 
-    async def handle_json_update(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_json_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка JSON-обновления фильтров"""
         if update.effective_user.id != USER_ID:
             return
 
         try:
             new_filters = json.loads(update.message.text)
-            if self.filter_manager.validate_filters(new_filters):
-                await self.filter_manager.save_filters(new_filters)
+            if fm.validate_filters(new_filters):
+                await fm.save_filters(new_filters)
                 await update.message.reply_text("✅ Фильтры успешно обновлены")
             else:
                 await update.message.reply_text("❌ Некорректный формат фильтров")
@@ -638,9 +626,9 @@ setup_bot_handlers(application, filter_manager)
             await update.message.reply_text("❌ Некорректный JSON формат")
         except Exception as e:
             logger.error(f"Ошибка обработки JSON: {e}")
-            await self.send_error_message(update)
+            await send_error_message(update)
 
-    async def send_error_message(self, update: Update):
+    async def send_error_message(update: Update):
         """Отправка сообщения об ошибке"""
         try:
             await update.message.reply_text(
@@ -649,6 +637,20 @@ setup_bot_handlers(application, filter_manager)
         except Exception as e:
             logger.error(f"Ошибка отправки сообщения об ошибке: {e}")
 
+    # Добавляем обработчики
+    handlers = [
+        CommandHandler(["start", "начало"], start),
+        CommandHandler("filters", show_filters),
+        CommandHandler("setfilter", set_filter),
+        CommandHandler("checkpools", check_pools),
+        CommandHandler("getfiltersjson", get_filters_json),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_json_update)
+    ]
+    
+    for handler in handlers:
+        app.add_handler(handler)
+
+setup_bot_handlers(application, filter_manager)
 
 class PoolMonitor:
     """Монитор пулов с улучшенной обработкой ошибок и производительностью"""
