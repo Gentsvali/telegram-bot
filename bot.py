@@ -827,7 +827,7 @@ class WebhookServer:
                     raise Exception("Ошибка инициализации мониторинга")
             
                 # 3. Устанавливаем webhook
-                await application.bot.set_webhook(url=WEBHOOK_URL)
+                await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
         
                 logger.info("🚀 Сервер успешно запущен")
             except Exception as e:
