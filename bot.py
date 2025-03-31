@@ -146,21 +146,21 @@ class SolanaClient:
         self.rate_limit_reset = 0
 
     async def initialize(self):
-        """Инициализация клиента с первым доступным RPC"""
-        for endpoint in RPC_ENDPOINTS:
-            try:
-                self.client = AsyncClient(
-                    endpoint["url"],
-                    commitment=RPC_CONFIG["COMMITMENT"],
-                    timeout=RPC_CONFIG["DEFAULT_TIMEOUT"]
-                )
-                await self.client.get_epoch_info()
-                logger.info(f"✅ Подключено к RPC: {endpoint['url']}")
-                return True
-            except Exception as e:
-                logger.warning(f"❌ Не удалось подключиться к {endpoint['url']}: {e}")
-                continue
-        return False  
+    """Инициализация клиента с первым доступным RPC"""
+    for endpoint in RPC_ENDPOINTS:
+        try:
+            self.client = AsyncClient(
+                endpoint["url"],
+                commitment="confirmed",  # явно указываем commitment вместо RPC_CONFIG["COMMITMENT"]
+                timeout=RPC_CONFIG["DEFAULT_TIMEOUT"]
+            )
+            await self.client.get_epoch_info()
+            logger.info(f"✅ Подключено к RPC: {endpoint['url']}")
+            return True
+        except Exception as e:
+            logger.warning(f"❌ Не удалось подключиться к {endpoint['url']}: {e}")
+            continue
+    return False  
 
     async def switch_endpoint(self):
         """Переключение на следующий доступный RPC endpoint"""
