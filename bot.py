@@ -513,8 +513,6 @@ class FilterManager:
 # Создаем глобальный экземпляр менеджера фильтров
 filter_manager = FilterManager()
 
-setup_bot_handlers(application, filter_manager)
-
 def setup_bot_handlers(app, fm):
     """Настройка всех обработчиков бота"""
     
@@ -552,6 +550,8 @@ def setup_bot_handlers(app, fm):
     
     for handler in handlers:
         app.add_handler(handler)
+
+setup_bot_handlers(application, filter_manager)
 
     async def set_filter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Установка значения фильтра"""
