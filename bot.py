@@ -114,34 +114,6 @@ class SolanaClient:
         self.request_counter = 0
         self.rate_limit_reset = 0
 
-# Проверка переменных окружения
-required_env_vars = [
-    "TELEGRAM_TOKEN", 
-    "GITHUB_TOKEN", 
-    "USER_ID", 
-    "WEBHOOK_URL",
-    "RPC_URL"
-]
-
-# Загрузка переменных окружения
-load_dotenv()
-
-# Проверка наличия всех необходимых переменных
-missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-if missing_vars:
-    raise ValueError(f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}")
-
-# Определение констант
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-REPO_OWNER = "Gentsvali"
-REPO_NAME = "telegram-bot"
-FILE_PATH = "filters.json"
-USER_ID = int(os.getenv("USER_ID"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))
-application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     async def initialize(self):
         """Инициализация клиента с первым доступным RPC"""
         for endpoint in RPC_ENDPOINTS:
@@ -157,7 +129,7 @@ application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
             except Exception as e:
                 logger.warning(f"❌ Не удалось подключиться к {endpoint['url']}: {e}")
                 continue
-        return False
+        return False  
 
     async def switch_endpoint(self):
         """Переключение на следующий доступный RPC endpoint"""
