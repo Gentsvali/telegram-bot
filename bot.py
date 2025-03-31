@@ -11,8 +11,6 @@ from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 from solders.signature import Signature
 from dotenv import load_dotenv
-
-load_dotenv()
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -21,9 +19,10 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
-# Для работы с GitHub
 import base64
+
+# Загрузка переменных окружения
+load_dotenv()
 
 # Настройка логгера
 logging.basicConfig(
@@ -41,19 +40,15 @@ logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-# Проверка наличия обязательных переменных окружения
+# Проверка обязательных переменных окружения
 required_env_vars = ["TELEGRAM_TOKEN", "GITHUB_TOKEN", "USER_ID", "WEBHOOK_URL"]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-
 if missing_vars:
-    error_message = (
-        f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}. "
-        "Пожалуйста, проверьте настройки."
-    )
+    error_message = f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}"
     logger.error(error_message)
     raise ValueError(error_message)
 
-# Загрузка переменных окружения
+# Конфигурация
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 REPO_OWNER = "Gentsvali"
@@ -62,15 +57,11 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
-
-# Настройки DLMM
 DLMM_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
 POLL_INTERVAL = 300  # 5 минут
-application = None
-pool_tracker = PoolTracker()
 
-# Конфигурация фильтров по умолчанию
+# Фильтры по умолчанию
 DEFAULT_FILTERS = {
     "disable_filters": False,
     "bin_steps": [20, 80, 100, 125, 250],
@@ -83,101 +74,119 @@ DEFAULT_FILTERS = {
     "dynamic_fee_tvl_ratio_min": 0.5,
 }
 
-# Текущие фильтры
+# Глобальные переменные
 current_filters = DEFAULT_FILTERS.copy()
+application = None
+pool_tracker = None
 
+class PoolTracker:
+    def __init__(self):
+        self.last_signature = None
+        self.known_pools = set()
+        self.running = False
 
-# Инициализация приложения Telegram
-async def setup_bot():
-    """Инициализация и настройка бота"""
-    global application
-    
-    application = (
-        ApplicationBuilder()
-        .token(os.getenv("TELEGRAM_TOKEN"))
-        .concurrent_updates(True)
-        .build()
-    )
-    
-    application.add_error_handler(error_handler)
-    setup_command_handlers(application)
-    
-    return application
+    async def start_tracking(self):
+        """Запуск мониторинга новых пулов"""
+        if self.running:
+            return
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обработчик ошибок бота."""
-    logger.error(
-        f"Ошибка при обработке обновления: {context.error}", exc_info=context.error
-    )
-    if update and isinstance(update, Update) and update.effective_message:
-        await update.effective_message.reply_text(
-            "⚠️ Произошла ошибка. Пожалуйста, попробуйте позже."
-        )
+        self.running = True
+        logger.info("Запуск мониторинга DLMM пулов...")
 
-
-async def load_filters(app=None):
-    """Загружает фильтры из файла или использует значения по умолчанию"""
-    global current_filters
-    try:
-        if os.path.exists(FILE_PATH):
-            with open(FILE_PATH, "r") as f:
-                loaded = json.load(f)
-                if validate_filters(loaded):
-                    current_filters.update(loaded)
-                    logger.info("Фильтры загружены из файла")
-                    return
-
-        if GITHUB_TOKEN:  # Теперь это часть load_filters()
+        while self.running:
             try:
-                url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
-                headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+                async with AsyncClient(SOLANA_RPC_URL) as client:
+                    signatures = (
+                        await client.get_signatures_for_address(
+                            DLMM_PROGRAM_ID,
+                            before=self.last_signature,
+                            limit=5,
+                            commitment="confirmed",
+                        )
+                    ).value
 
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(url, headers=headers)
-                    if response.status_code == 200:
-                        content = base64.b64decode(response.json()["content"]).decode()
-                        loaded = json.loads(content)
-                        if validate_filters(loaded):
-                            current_filters.update(loaded)
-                            with open(FILE_PATH, "w") as f:
-                                json.dump(loaded, f, indent=4)
-                            logger.info("Фильтры загружены из GitHub")
-                            return
-            except Exception as github_error:
-                logger.warning(f"Ошибка загрузки из GitHub: {github_error}")
+                    if signatures:
+                        self.last_signature = signatures[0].signature
+                        logger.info(f"Найдено новых транзакций: {len(signatures)}")
+                        for sig in signatures:
+                            await self.process_transaction(client, sig.signature)
 
-        current_filters = DEFAULT_FILTERS.copy()
-        logger.info("Используются фильтры по умолчанию")
+            except Exception as e:
+                logger.error(f"Ошибка мониторинга: {str(e)}")
+            
+            await asyncio.sleep(POLL_INTERVAL)
 
-    except Exception as e:
-        current_filters = DEFAULT_FILTERS.copy()
-        logger.error(
-            f"Ошибка загрузки фильтров: {e}. Используются значения по умолчанию"
-        )
+    async def process_transaction(self, client, signature):
+        """Анализ транзакции"""
+        try:
+            tx = await client.get_transaction(
+                signature, 
+                encoding="jsonParsed", 
+                max_supported_transaction_version=0
+            )
+            if not tx.value:
+                return
+            logger.info(f"Обработана транзакция: {signature}")
+        except Exception as e:
+            logger.error(f"Ошибка обработки транзакции: {e}")
 
-
-def validate_filters(filters: dict) -> bool:
-    """Проверяет корректность фильтров для DLMM пулов."""
-    required_keys = [
-        "disable_filters",
-        "bin_steps",
-        "min_tvl",
-        "base_fee_min",
-        "base_fee_max",
-        "volume_1h_min",
-        "volume_5m_min",
-        "fee_tvl_ratio_24h_min",
-        "dynamic_fee_tvl_ratio_min",
-    ]
-    return all(key in filters for key in required_keys)
-
+    async def stop_tracking(self):
+        """Остановка мониторинга"""
+        self.running = False
+        logger.info("Мониторинг DLMM пулов остановлен")
 
 # Инициализация Quart приложения
 app = Quart(__name__)
 
+async def setup_bot():
+    """Инициализация Telegram бота"""
+    global application
+    application = (
+        ApplicationBuilder()
+        .token(TELEGRAM_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
+    application.add_error_handler(error_handler)
+    setup_command_handlers(application)
+    return application
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик ошибок бота"""
+    logger.error(f"Ошибка при обработке обновления: {context.error}", exc_info=context.error)
+    if update and isinstance(update, Update) and update.effective_message:
+        await update.effective_message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
+
+def setup_command_handlers(application):
+    """Настройка обработчиков команд"""
+    # Основные команды
+    application.add_handler(CommandHandler("start", start, filters=filters.User(user_id=USER_ID)))
+    
+    # Команды управления фильтрами
+    filter_handlers = [
+        CommandHandler("filters", show_filters, filters=filters.User(user_id=USER_ID)),
+        CommandHandler("setfilter", set_filter, filters=filters.User(user_id=USER_ID)),
+        CommandHandler("getfiltersjson", get_filters_json, filters=filters.User(user_id=USER_ID))),
+        MessageHandler(
+            filters=filters.User(user_id=USER_ID) & filters.TEXT & ~filters.COMMAND,
+            callback=update_filters_via_json,
+        ),
+    ]
+    for handler in filter_handlers:
+        application.add_handler(handler)
+    
+    # Команды мониторинга
+    application.add_handler(CommandHandler("trackpools", start_pool_tracking))
+    application.add_handler(CommandHandler("stoptracking", stop_pool_tracking))
+    
+    # Обработчик неизвестных команд
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    
+    logger.info("✅ Обработчики команд успешно зарегистрированы")
 
 @app.before_serving
 async def startup():
+    """Инициализация приложения"""
     global application, pool_tracker
     
     logger.info("Starting initialization...")
@@ -189,131 +198,28 @@ async def startup():
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
     logger.info("Bot initialized and webhook set")
 
+    # Инициализация трекера
+    pool_tracker = PoolTracker()
+    
     # Загрузка фильтров
     await load_filters()
     
-    logger.info("Pool tracker started")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    if update.effective_user.id != USER_ID:
-        logger.warning(
-            f"Попытка доступа от неавторизованного пользователя: {update.effective_user.id}"
-        )
-        return
-
-    await update.message.reply_text(
-        "🚀 Мониторинг DLMM пулов Meteora\n"
-        "Команды:\n"
-        "/filters - текущие настройки\n"
-        "/setfilter - изменить параметры\n"
-        "/checkpools - проверить сейчас\n"
-        "/help - справка по командам"
-    )
-
-
-async def fetch_dlmm_pools():
-    """Получаем все аккаунты, созданные программой DLMM"""
-    rpc_url = "https://api.mainnet-beta.solana.com"  # или ваш RPC
-    async with AsyncClient(rpc_url) as client:
-        # Получаем все пулы DLMM
-        accounts = await client.get_program_accounts(DLMM_PROGRAM_ID)
-
-        print(f"Найдено пулов: {len(accounts)}")
-        for account in accounts[:5]:  # Выводим первые 5 пулов
-            print(f"Адрес пула: {account.pubkey}")
-
-        # Пример: берём первый пул для анализа
-        if accounts:
-            pool_data = await client.get_account_info(accounts[0].pubkey)
-            print("\nПример данных пула (первые 32 байта):", pool_data.value.data[:32])
-
-
-async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает текущие фильтры"""
-    if update.effective_user.id != USER_ID:
-        return
-
-    response = (
-        "⚙️ Текущие фильтры:\n"
-        f"• Bin Steps: {', '.join(map(str, current_filters['bin_steps']))}\n"
-        f"• Мин TVL: {current_filters['min_tvl']:,.2f} SOL\n"
-        f"• Мин комиссия: {current_filters['base_fee_min']}%\n"
-        f"• Макс комиссия: {current_filters['base_fee_max']}%\n"
-        f"• Мин объем (1ч): {current_filters['volume_1h_min']:,.2f} SOL\n"
-        f"• Мин объем (5м): {current_filters['volume_5m_min']:,.2f} SOL"
-    )
-    await update.message.reply_text(response)
-
-
-async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Изменяет параметры фильтров"""
-    if update.effective_user.id != USER_ID:
-        return
-
-    try:
-        args = context.args
-        if len(args) < 2:
-            await update.message.reply_text(
-                "Используйте: /setfilter [параметр] [значение]"
-            )
-            return
-
-        param = args[0].lower()
-        value = args[1]
-
-        if param == "bin_steps":
-            current_filters[param] = [int(v.strip()) for v in value.split(",")]
-        elif param in [
-            "min_tvl",
-            "base_fee_min",
-            "base_fee_max",
-            "volume_1h_min",
-            "volume_5m_min",
-        ]:
-            current_filters[param] = float(value)
-        else:
-            await update.message.reply_text(f"Неизвестный параметр: {param}")
-            return
-
-        await save_filters(update, context)
-        await update.message.reply_text(f"✅ {param} обновлен: {value}")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-
-
-async def start_pool_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда для запуска мониторинга"""
-    if update.effective_user.id != USER_ID:
-        return
-
+    # Запуск трекера
     asyncio.create_task(pool_tracker.start_tracking())
-    await update.message.reply_text("Мониторинг DLMM пулов запущен")
-
-
-async def stop_pool_tracking(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда для остановки мониторинга"""
-    if update.effective_user.id != USER_ID:
-        return
-
-    await pool_tracker.stop_tracking()
-    await update.message.reply_text("Мониторинг DLMM пулов остановлен")
-
+    logger.info("Pool tracker started")
 
 @app.after_serving
 async def shutdown_app():
-    """Корректно завершает работу бота"""
+    """Корректное завершение работы"""
     try:
         logger.info("Завершение работы приложения...")
-
-        if application.running:
+        if application and application.running:
             await application.stop()
             await application.shutdown()
             logger.info("Бот успешно остановлен")
-        else:
-            logger.info("Бот уже остановлен")
-
+        if pool_tracker and pool_tracker.running:
+            await pool_tracker.stop_tracking()
+            logger.info("Трекер пулов остановлен")
     except Exception as e:
         logger.error(f"Ошибка при завершении работы: {e}")
 
@@ -960,13 +866,10 @@ async def startup_sequence():
 
 
 if __name__ == "__main__":
-    # Создаем event loop вручную для корректной работы
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
     try:
-        # Запускаем Quart приложение
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), loop=loop)
+        app.run(host="0.0.0.0", port=PORT, loop=loop)
     except Exception as e:
         logger.error(f"Failed to start application: {e}")
     finally:
