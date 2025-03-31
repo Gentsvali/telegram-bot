@@ -930,6 +930,7 @@ class WebhookServer:
             raise
 
 webhook_server = WebhookServer(application, pool_monitor, filter_manager)
+app = webhook_server.app
 
 if __name__ == "__main__":
     try:
