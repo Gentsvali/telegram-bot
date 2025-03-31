@@ -925,8 +925,6 @@ class WebhookServer:
             logger.error(f"Ошибка запуска сервера: {e}")
             raise
 
-setup_bot_handlers(application, filter_manager)# Создание и запуск сервера
-
 webhook_server = WebhookServer(application, pool_monitor, filter_manager)
 
 if __name__ == "__main__":
