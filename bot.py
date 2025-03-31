@@ -140,6 +140,7 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
+application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     async def initialize(self):
         """Инициализация клиента с первым доступным RPC"""
@@ -321,8 +322,6 @@ class PoolDataDecoder:
         except Exception as e:
             logger.error(f"Ошибка валидации данных пула: {e}")
             return False
-
-application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 # Обновляем функцию обработки данных пула
 async def handle_pool_data(data: bytes):
