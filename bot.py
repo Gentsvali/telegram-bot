@@ -742,11 +742,9 @@ class PoolTracker:
 
             except Exception as e:
                 logger.error(f"Ошибка мониторинга: {str(e)}")
-
-# Создание экземпляра класса должно быть ВНЕ класса
-tracker = PoolTracker()  # Правильное создание экземпляра
-
-            await asyncio.sleep(300)  # Проверка каждые 5 минут
+            
+            # Важно: этот sleep должен быть ВНЕ блока try-except
+            await asyncio.sleep(300)  # Исправленный отступ
 
     async def process_transaction(self, client, signature):
         """Анализ транзакции"""
@@ -754,19 +752,14 @@ tracker = PoolTracker()  # Правильное создание экземпл�
             tx = await client.get_transaction(
                 signature, encoding="jsonParsed", max_supported_transaction_version=0
             )
-
             if not tx.value:
                 return
-
-            # Логируем базовую информацию
-            logger.info(f"Транзакция: {signature}")
-            logger.info(f"Блок: {tx.value.slot}")
-            logger.info(f"Дата: {tx.value.block_time}")
-
-            # Здесь можно добавить более детальный анализ
-
+            logger.info(f"Обработана транзакция: {signature}")
         except Exception as e:
-            logger.warning(f"Ошибка обработки транзакции: {str(e)}")
+            logger.error(f"Ошибка обработки транзакции: {e}")
+
+# Создание экземпляра класса ВНЕ класса
+tracker = PoolTracker()
 
     async def stop_tracking(self):
         """Остановка мониторинга"""
@@ -967,16 +960,5 @@ async def startup_sequence():
 
 
 if __name__ == "__main__":
-    app = Quart(__name__)
-
-    @app.before_serving
-    async def startup():
-        logger.info("Запуск бота...")
-        await setup_bot()
-
-    @app.route(f'/{os.getenv("TELEGRAM_TOKEN")}', methods=["POST"])
-    async def webhook():
-        # Ваша существующая логика вебхука
-        pass
-
+    asyncio.run(fetch_dlmm_pools())
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
