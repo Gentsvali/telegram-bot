@@ -106,6 +106,32 @@ def setup_logger():
 
 logger = setup_logger()
 
+# Проверка переменных окружения
+load_dotenv()
+
+required_env_vars = [
+    "TELEGRAM_TOKEN", 
+    "GITHUB_TOKEN", 
+    "USER_ID", 
+    "WEBHOOK_URL",
+    "RPC_URL"
+]
+
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    raise ValueError(f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}")
+
+# Определение констант
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO_OWNER = "Gentsvali"
+REPO_NAME = "telegram-bot"
+FILE_PATH = "filters.json"
+USER_ID = int(os.getenv("USER_ID"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.environ.get("PORT", 10000))
+application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
 class SolanaClient:
     def __init__(self):
         self.current_endpoint_index = 0
