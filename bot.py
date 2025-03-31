@@ -44,6 +44,18 @@ RPC_CONFIG = {
     "COMMITMENT": "confirmed"
 }
 
+DEFAULT_FILTERS = {
+    "disable_filters": False,
+    "bin_steps": [20, 80, 100, 125, 250],  # Допустимые шаги корзин
+    "min_tvl": 10.0,  # Минимальный TVL (в SOL)
+    "base_fee_min": 0.1,  # Минимальная базовая комиссия (в %)
+    "base_fee_max": 10.0,  # Максимальная базовая комиссия (в %)
+    "volume_1h_min": 10.0,  # Минимальный объем за 1 час (в SOL)
+    "volume_5m_min": 1.0,  # Минимальный объем за 5 минут (в SOL)
+    "fee_tvl_ratio_24h_min": 0.1,  # Минимальное отношение комиссии к TVL за 24 часа (в %)
+    "dynamic_fee_tvl_ratio_min": 0.5,  # Минимальное отношение динамической комиссии к TVL (в %)
+}
+
 # Обновленные RPC эндпоинты с приоритетами
 RPC_ENDPOINTS = [
     {"url": os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com"), "priority": 1},
@@ -93,6 +105,33 @@ class SolanaClient:
         self.last_request_time = 0
         self.request_counter = 0
         self.rate_limit_reset = 0
+
+# Проверка переменных окружения
+required_env_vars = [
+    "TELEGRAM_TOKEN", 
+    "GITHUB_TOKEN", 
+    "USER_ID", 
+    "WEBHOOK_URL",
+    "RPC_URL"
+]
+
+# Загрузка переменных окружения
+load_dotenv()
+
+# Проверка наличия всех необходимых переменных
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    raise ValueError(f"Отсутствуют обязательные переменные окружения: {', '.join(missing_vars)}")
+
+# Определение констант
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO_OWNER = "Gentsvali"
+REPO_NAME = "telegram-bot"
+FILE_PATH = "filters.json"
+USER_ID = int(os.getenv("USER_ID"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.environ.get("PORT", 10000))
 
     async def initialize(self):
         """Инициализация клиента с первым доступным RPC"""
@@ -924,7 +963,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"Критическая ошибка: {e}")
         sys.exit(1)
-
-
-
-
