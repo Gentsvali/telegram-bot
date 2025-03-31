@@ -159,30 +159,47 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def setup_command_handlers(application):
     """Настройка обработчиков команд"""
-    # Основные команды
-    application.add_handler(CommandHandler("start", start, filters=filters.User(user_id=USER_ID)))
-    
-    # Команды управления фильтрами
-    filter_handlers = [
-        CommandHandler("filters", show_filters, filters=filters.User(user_id=USER_ID)),
-        CommandHandler("setfilter", set_filter, filters=filters.User(user_id=USER_ID)),
-        CommandHandler("getfiltersjson", get_filters_json, filters=filters.User(user_id=USER_ID))),
-        MessageHandler(
-            filters=filters.User(user_id=USER_ID) & filters.TEXT & ~filters.COMMAND,
-            callback=update_filters_via_json,
-        ),
-    ]
-    for handler in filter_handlers:
-        application.add_handler(handler)
-    
-    # Команды мониторинга
-    application.add_handler(CommandHandler("trackpools", start_pool_tracking))
-    application.add_handler(CommandHandler("stoptracking", stop_pool_tracking))
-    
-    # Обработчик неизвестных команд
-    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
-    
-    logger.info("✅ Обработчики команд успешно зарегистрированы")
+    try:
+        # Основные команды
+        application.add_handler(
+            CommandHandler("start", start, filters=filters.User(user_id=USER_ID))
+        )
+
+        # Команды управления фильтрами
+        filter_handlers = [
+            CommandHandler(
+                "filters", show_filters, filters=filters.User(user_id=USER_ID))
+            ),
+            CommandHandler(
+                "setfilter", set_filter, filters=filters.User(user_id=USER_ID))
+            ),
+            CommandHandler(
+                "getfiltersjson", get_filters_json, filters=filters.User(user_id=USER_ID))
+            ),
+            MessageHandler(
+                filters=filters.User(user_id=USER_ID) & filters.TEXT & ~filters.COMMAND,
+                callback=update_filters_via_json,
+            ),
+        ]
+        for handler in filter_handlers:
+            application.add_handler(handler)
+
+        # Команды мониторинга
+        application.add_handler(
+            CommandHandler("trackpools", start_pool_tracking, filters=filters.User(user_id=USER_ID))
+        )
+        application.add_handler(
+            CommandHandler("stoptracking", stop_pool_tracking, filters=filters.User(user_id=USER_ID))
+        )
+
+        # Обработчик неизвестных команд
+        application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+
+        logger.info("✅ Обработчики команд успешно зарегистрированы")
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка при настройке обработчиков команд: {e}", exc_info=True)
+        raise
 
 @app.before_serving
 async def startup():
@@ -222,6 +239,7 @@ async def shutdown_app():
             logger.info("Трекер пулов остановлен")
     except Exception as e:
         logger.error(f"Ошибка при завершении работы: {e}")
+
 
 
 async def send_pool_alert(pool: dict):
