@@ -743,8 +743,7 @@ class PoolTracker:
             except Exception as e:
                 logger.error(f"Ошибка мониторинга: {str(e)}")
             
-            # Важно: этот sleep должен быть ВНЕ блока try-except
-            await asyncio.sleep(300)  # Исправленный отступ
+            await asyncio.sleep(300)
 
     async def process_transaction(self, client, signature):
         """Анализ транзакции"""
@@ -758,14 +757,13 @@ class PoolTracker:
         except Exception as e:
             logger.error(f"Ошибка обработки транзакции: {e}")
 
-# Создание экземпляра класса ВНЕ класса
-tracker = PoolTracker()
-
     async def stop_tracking(self):
         """Остановка мониторинга"""
         self.running = False
         logger.info("Мониторинг DLMM пулов остановлен")
 
+# Создание экземпляра класса ВНЕ класса
+tracker = PoolTracker()
 
 def setup_command_handlers(application):
     """
