@@ -166,8 +166,6 @@ def validate_filters(filters: dict) -> bool:
     return all(key in filters for key in required_keys)
 
 
-application.add_error_handler(error_handler)
-
 # Инициализация Quart приложения
 app = Quart(__name__)
 
