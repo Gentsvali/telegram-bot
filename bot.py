@@ -519,25 +519,48 @@ class CommandHandler:
     def __init__(self, application, filter_manager):
         self.application = application
         self.filter_manager = filter_manager
-        self._setup_handlers()  # Переименовали метод, чтобы избежать рекурсии
+        self._register_handlers()  # Новое название метода для ясности
 
-    def _setup_handlers(self):  # Изменили название метода
-        """Настройка обработчиков команд"""
+    def _register_handlers(self):
+        """Регистрация обработчиков команд без рекурсии"""
+        # Создаем список обработчиков
         handlers = [
-            CommandHandler("start", self.start_command),
-            CommandHandler("filters", self.show_filters),
-            CommandHandler("setfilter", self.set_filter),
-            CommandHandler("checkpools", self.check_pools),
-            CommandHandler("getfiltersjson", self.get_filters_json),
+            CommandHandler("start", self._start_command_wrapper),
+            CommandHandler("начало", self._start_command_wrapper),
+            CommandHandler("filters", self._show_filters_wrapper),
+            CommandHandler("setfilter", self._set_filter_wrapper),
+            CommandHandler("checkpools", self._check_pools_wrapper),
+            CommandHandler("getfiltersjson", self._get_filters_json_wrapper),
             MessageHandler(
                 filters.TEXT & ~filters.COMMAND & filters.User(user_id=USER_ID),
-                self.handle_json_update
+                self._handle_json_update_wrapper
             )
         ]
         
+        # Регистрируем все обработчики
         for handler in handlers:
             self.application.add_handler(handler)
 
+    # Обертки для обработчиков команд
+    async def _start_command_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.start_command(update, context)
+    
+    async def _show_filters_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.show_filters(update, context)
+    
+    async def _set_filter_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.set_filter(update, context)
+    
+    async def _check_pools_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.check_pools(update, context)
+    
+    async def _get_filters_json_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.get_filters_json(update, context)
+    
+    async def _handle_json_update_wrapper(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.handle_json_update(update, context)
+
+    # Оригинальные методы обработчиков (остаются без изменений)
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
         if update.effective_user.id != USER_ID:
@@ -547,6 +570,7 @@ class CommandHandler:
             welcome_message = (
                 "🚀 Мониторинг DLMM пулов Meteora\n\n"
                 "Доступные команды:\n"
+                "/start или /начало - показать это сообщение\n"
                 "/filters - показать текущие настройки\n"
                 "/setfilter - изменить параметр фильтра\n"
                 "/checkpools - проверить пулы сейчас\n"
