@@ -67,7 +67,8 @@ PORT = int(os.environ.get("PORT", 10000))
 DLMM_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
 POLL_INTERVAL = 300  # 5 минут
-pool_tracker = None
+application = None
+pool_tracker = PoolTracker()
 
 # Конфигурация фильтров по умолчанию
 DEFAULT_FILTERS = {
@@ -88,14 +89,19 @@ current_filters = DEFAULT_FILTERS.copy()
 
 # Инициализация приложения Telegram
 async def setup_bot():
+    """Инициализация и настройка бота"""
+    global application
+    
     application = (
         ApplicationBuilder()
         .token(os.getenv("TELEGRAM_TOKEN"))
         .concurrent_updates(True)
         .build()
     )
+    
     application.add_error_handler(error_handler)
     setup_command_handlers(application)
+    
     return application
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -172,16 +178,21 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup():
+    global application, pool_tracker
+    
     logger.info("Starting initialization...")
-    await application.initialize()  # Важно: сначала инициализация
+    
+    # Инициализация бота
+    application = await setup_bot()
+    await application.initialize()
     await application.start()
     await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
     logger.info("Bot initialized and webhook set")
 
-    global pool_tracker
-
-asyncio.create_task(pool_tracker.start_tracking())
-
+    # Загрузка фильтров
+    await load_filters()
+    
+    logger.info("Pool tracker started")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -216,9 +227,6 @@ async def fetch_dlmm_pools():
         if accounts:
             pool_data = await client.get_account_info(accounts[0].pubkey)
             print("\nПример данных пула (первые 32 байта):", pool_data.value.data[:32])
-
-
-asyncio.run(fetch_dlmm_pools())
 
 
 async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -826,10 +834,6 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# Инициализация обработчиков
-setup_command_handlers(application)
-
-
 # Конфигурация веб-хуков и маршрутов
 class WebhookConfig:
     """Конфигурация для веб-хуков и маршрутов"""
@@ -956,5 +960,14 @@ async def startup_sequence():
 
 
 if __name__ == "__main__":
-    asyncio.run(fetch_dlmm_pools())
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    # Создаем event loop вручную для корректной работы
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        # Запускаем Quart приложение
+        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), loop=loop)
+    except Exception as e:
+        logger.error(f"Failed to start application: {e}")
+    finally:
+        loop.close()
