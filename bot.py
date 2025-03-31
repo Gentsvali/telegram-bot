@@ -186,34 +186,50 @@ class SolanaClient:
             logger.error(f"❌ Ошибка при переключении RPC: {e}")
             return False
 
-    async def get_program_accounts(self, program_id: str, filters: List = None):
-        """Получение аккаунтов программы с обработкой ошибок"""
-        retry_count = 0
-        while retry_count < RPC_CONFIG["MAX_RETRIES"]:
-            try:
-                response = await self.client.get_program_accounts(
-                    Pubkey.from_string(program_id),
-                    encoding="base64",
-                    filters=filters or [],
-                    commitment=RPC_CONFIG["COMMITMENT"]
-                )
-                return response
-                
-            except SolanaRpcException as e:
-                if "Rate limit exceeded" in str(e):
-                    await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
-                elif "Connection refused" in str(e):
-                    if not await self.switch_endpoint():
-                        await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"] * 2)
-                retry_count += 1
-                
-            except Exception as e:
-                logger.error(f"Неожиданная ошибка при получении аккаунтов: {e}")
+async def get_program_accounts(self, program_id: str, filters: List = None):
+    """Получение аккаунтов программы с обработкой ошибок"""
+    retry_count = 0
+    while retry_count < RPC_CONFIG["MAX_RETRIES"]:
+        try:
+            # Правильный формат фильтров
+            formatted_filters = []
+            if filters:
+                for filter_item in filters:
+                    if isinstance(filter_item, int):
+                        formatted_filters.append({
+                            "dataSize": filter_item
+                        })
+                    elif hasattr(filter_item, 'offset'):  # Для memcmp
+                        formatted_filters.append({
+                            "memcmp": {
+                                "offset": filter_item.offset,
+                                "bytes": filter_item.bytes
+                            }
+                        })
+
+            response = await self.client.get_program_accounts(
+                Pubkey.from_string(program_id),
+                encoding="base64",
+                filters=formatted_filters,
+                commitment=RPC_CONFIG["COMMITMENT"]
+            )
+            return response
+            
+        except SolanaRpcException as e:
+            if "Rate limit exceeded" in str(e):
+                await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
+            elif "Connection refused" in str(e):
                 if not await self.switch_endpoint():
-                    break
-                retry_count += 1
-                
-        return None
+                    await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"] * 2)
+            retry_count += 1
+            
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при получении аккаунтов: {e}")
+            if not await self.switch_endpoint():
+                break
+            retry_count += 1
+            
+    return None
 
 # Создаем глобальный экземпляр клиента
 solana_client = SolanaClient()
