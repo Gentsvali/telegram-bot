@@ -56,6 +56,14 @@ DEFAULT_FILTERS = {
     "dynamic_fee_tvl_ratio_min": 0.5,  # Минимальное отношение динамической комиссии к TVL (в %)
 }
 
+# Добавляем недостающие константы
+DLMM_PROGRAM_ID = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+DLMM_CONFIG = {
+    "pool_size": 108,  # Примерный размер данных пула
+    "update_interval": 60,  # Интервал обновления в секундах
+    "retry_delay": 5  # Задержка при ошибках
+}
+
 # Обновленные RPC эндпоинты с приоритетами
 RPC_ENDPOINTS = [
     {"url": os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com"), "priority": 1},
@@ -313,6 +321,8 @@ class PoolDataDecoder:
         except Exception as e:
             logger.error(f"Ошибка валидации данных пула: {e}")
             return False
+
+application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 # Обновляем функцию обработки данных пула
 async def handle_pool_data(data: bytes):
