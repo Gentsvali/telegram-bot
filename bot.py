@@ -29,6 +29,7 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Commitment
 from solana.rpc.core import RPCException as SolanaRpcException
 from solana.rpc.types import MemcmpOpts
+from solana.rpc.config import RpcProgramAccountsConfig
 from solders.pubkey import Pubkey
 import base58
 import base64
@@ -700,10 +701,6 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         try:
-            # Используем RpcProgramAccountsConfig
-            from solana_client import RpcProgramAccountsConfig
-            from solana.rpc.types import MemcmpOpts
-        
             config = RpcProgramAccountsConfig(
                 filters=[]
             )
