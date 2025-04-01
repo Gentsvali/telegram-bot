@@ -760,7 +760,7 @@ class PoolMonitor:
 pool_monitor = PoolMonitor(solana_client)
 
 class WebhookServer:
-    def __init__(self, application, pool_monitor):
+    def __init__(self, application, pool_monitor, filter_manager):
         self.app = Quart(__name__)
         self.telegram_app = application
         self.pool_monitor = pool_monitor
@@ -903,7 +903,7 @@ class WebhookServer:
             logger.error(f"Ошибка запуска сервера: {e}")
             raise
 
-webhook_server = WebhookServer(application, pool_monitor)
+webhook_server = WebhookServer(application, pool_monitor, filter_manager)
 app = webhook_server.app
 
 if __name__ == "__main__":
