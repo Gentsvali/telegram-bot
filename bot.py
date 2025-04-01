@@ -88,7 +88,7 @@ RPC_ENDPOINTS = [
 # Настройка логгера
 def setup_logger():
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     
     # Ротация файлов логов (максимум 5 файлов по 5MB)
     file_handler = RotatingFileHandler(
@@ -219,13 +219,27 @@ class SolanaClient:
         """Упрощённый запрос с автоматическим переключением"""
         for attempt in range(3):
             try:
+                # Добавляем логирование запроса
+                logger.debug(f"Отправка запроса к RPC: {self.current_endpoint['url']}")
+                logger.debug(f"Program ID: {program_id}")
+                logger.debug(f"Фильтры: {filters}")
+            
                 response = await self.client.get_program_accounts(
                     Pubkey.from_string(program_id),
                     encoding="base64",
                     filters=filters,
                     commitment=Commitment("confirmed")
                 )
+            
+                # Добавляем логирование ответа
+                logger.debug(f"Получен ответ: {response}")
+                if response and hasattr(response, 'value'):
+                    logger.debug(f"Количество аккаунтов в ответе: {len(response.value)}")
+                else:
+                    logger.debug("Ответ пустой или не содержит value")
+                
                 return response
+            
             except Exception as e:
                 logger.warning(f"Попытка {attempt+1} не удалась: {str(e)}")
                 if not await self.switch_endpoint():
@@ -701,14 +715,27 @@ class PoolMonitor:
             )
         ]
         
+        # Добавляем логирование
+        logger.debug(f"Запрос пулов с фильтрами: {filters}")
+        logger.debug(f"Используется Program ID: {DLMM_PROGRAM_ID}")
+
         try:
             response = await self.solana_client.get_program_accounts(
-                "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",  # DLMM program ID
+                DLMM_program_ID,
                 filters
             )
+
+            # Добавляем логирование результата
+            if response:
+                logger.debug(f"Получено пулов: {len(response)}")
+                logger.debug(f"Первый пул в ответе: {response[0] if response else None}")
+            else:
+                logger.debug("Получен пустой ответ от RPC")
+            
             return response.value if response else []
+        
         except Exception as e:
-            logger.error(f"Ошибка получения данных пулов: {e}")
+            logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
             return []
 
     async def refresh_pools(self):
