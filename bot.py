@@ -84,7 +84,7 @@ RPC_ENDPOINTS = [
     {"url": os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com"), "priority": 1},
     {"url": "https://rpc.ankr.com/solana", "priority": 2},
     {"url": "https://ssc-dao.genesysgo.net", "priority": 3},
-    {"url": "https://solana-mainnet.rpc.extrnode.com", "priority": 4}
+    {"url": "https://solana-rpc.publicnode.com", "priority": 4}
 ]
 
 # Настройка логгера
