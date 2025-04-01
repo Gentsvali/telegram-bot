@@ -695,13 +695,10 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         filters = [
-            {"dataSize": 108},  # Фиксированный размер данных пула
-            {
-                "memcmp": {
-                    "offset": 0,
-                    "bytes": base58.b58encode(bytes([1])).decode()
-                }
-            }
+            MemcmpOpts(
+                offset=0,
+                bytes=base58.b58encode(bytes([1])).decode()
+            )
         ]
         
         try:
