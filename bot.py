@@ -680,7 +680,7 @@ def setup_bot_handlers(app, fm):
     # Добавьте обработчик ошибок
     app.add_error_handler(error_handler)
 
-setup_bot_handlers(application, filter_manager)
+setup_bot_handlers(application, pool_monitor)
 
 class PoolMonitor:
     def __init__(self, solana_client):
@@ -756,6 +756,8 @@ class PoolMonitor:
         while True:
             success = await self.refresh_pools()
             await asyncio.sleep(interval if success else 5)  # При ошибках уменьшаем интервал
+
+pool_monitor = PoolMonitor(solana_client)
 
 class WebhookServer:
     def __init__(self, application, pool_monitor, filter_manager):
@@ -901,7 +903,7 @@ class WebhookServer:
             logger.error(f"Ошибка запуска сервера: {e}")
             raise
 
-webhook_server = WebhookServer(application, pool_monitor, filter_manager)
+webhook_server = WebhookServer(application, pool_monitor)
 app = webhook_server.app
 
 if __name__ == "__main__":
