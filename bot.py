@@ -680,7 +680,7 @@ def setup_bot_handlers(app, fm):
     # Добавьте обработчик ошибок
     app.add_error_handler(error_handler)
 
-setup_bot_handlers(application, pool_monitor)
+setup_bot_handlers(application, filter_manager)
 
 class PoolMonitor:
     def __init__(self, solana_client):
