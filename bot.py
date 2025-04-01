@@ -32,11 +32,6 @@ from solana.rpc.types import MemcmpOpts
 from solders.pubkey import Pubkey
 import base58
 import base64
-from solana_client import (
-    rpc_config::RpcProgramAccountsConfig,
-    rpc_filter::{Memcmp, RpcFilterType},
-    rpc_request::RpcRequest,
-)
 
 # Настройка логгера с ротацией файлов
 from logging.handlers import RotatingFileHandler
