@@ -137,6 +137,27 @@ application = (
     .build()
 )
 
+async def init_monitoring():
+    """Инициализация системы мониторинга"""
+    try:
+        # Инициализация Solana клиента
+        if not await solana_client.initialize():
+            logger.error("Не удалось инициализировать Solana клиент")
+            return False
+
+        # Загрузка фильтров
+        if not await filter_manager.load_filters():
+            logger.warning("Используются фильтры по умолчанию")
+
+        # Запуск мониторинга
+        asyncio.create_task(pool_monitor.start_monitoring())
+        logger.info("✅ Мониторинг пулов запущен")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка инициализации мониторинга: {e}")
+        return False
+
 class SolanaClient:
     def __init__(self):
         self.current_endpoint_index = 0
