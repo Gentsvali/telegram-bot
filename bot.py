@@ -231,7 +231,7 @@ class SolanaClient:
                 processed_filters = []
                 for f in filters:
                     if isinstance(f, MemcmpOpts):
-                    processed_filters.append(f)
+                        processed_filters.append(f)
                     elif isinstance(f, dict):
                         if 'memcmp' in f:
                             processed_filters.append(MemcmpOpts(
