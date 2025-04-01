@@ -182,32 +182,27 @@ class SolanaClient:
     async def switch_endpoint(self):
         """Переключение на следующий доступный RPC endpoint"""
         old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
-    
-        for _ in range(len(RPC_ENDPOINTS)):
         self.current_endpoint_index = (self.current_endpoint_index + 1) % len(RPC_ENDPOINTS)
-        new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
-        
+    
         try:
             if self.client:
                 await self.client.close()
-            
+        
+            new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
             self.client = AsyncClient(
                 new_endpoint["url"],
                 commitment=Commitment("confirmed"),
                 timeout=RPC_CONFIG["DEFAULT_TIMEOUT"]
             )
-            
+        
             # Проверяем новое подключение
             await self.client.get_epoch_info()
             logger.info(f"✅ Переключено с {old_endpoint} на {new_endpoint['url']}")
             return True
-            
+        
         except Exception as e:
-            logger.error(f"❌ Ошибка при подключении к {new_endpoint['url']}: {e}")
-            continue
-    
-    logger.critical("❌ Все RPC endpoints недоступны")
-    return False
+            logger.error(f"❌ Ошибка при переключении RPC: {e}")
+            return False
 
     async def initialize(self):
         """Инициализация клиента с первым доступным RPC"""
