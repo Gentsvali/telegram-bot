@@ -813,8 +813,6 @@ async def init_monitoring():
         return False
 
 class WebhookServer:
-    """Улучшенный сервер для обработки webhook с мониторингом здоровья"""
-    
     def __init__(self, application, pool_monitor, filter_manager):
         self.app = Quart(__name__)
         self.telegram_app = application
@@ -822,16 +820,13 @@ class WebhookServer:
         self.filter_manager = filter_manager
         self.setup_routes()
 
-    def setup_routes(self):
-        """Настройка маршрутов с обработкой ошибок"""
-        
+    def setup_routes(self):        
         @self.app.before_serving
         async def startup():
-            """Инициализация при запуске"""
             try:
                 # Инициализируем Solana клиент
                 if not await solana_client.initialize():
-                logger.error("Не удалось инициализировать Solana клиент")
+                    logger.error("Не удалось инициализировать Solana клиент")
                     raise Exception("Ошибка инициализации Solana клиента")
 
                 # Инициализируем Telegram приложение
