@@ -53,7 +53,7 @@ DEFAULT_FILTERS = {
 # Добавляем недостающие константы
 DLMM_PROGRAM_ID = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
 DLMM_CONFIG = {
-    "pool_size": 108,  # Примерный размер данных пула
+    "pool_size": None,  # Примерный размер данных пула
     "update_interval": 60,  # Интервал обновления в секундах
     "retry_delay": 5  # Задержка при ошибках
 }
@@ -708,35 +708,42 @@ class PoolMonitor:
         
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
-        filters = [
-            MemcmpOpts(
-                offset=0,
-                bytes=base58.b58encode(bytes([1])).decode()
-            ),
-            MemcmpOpts(
-                offset=0,
-                bytes=base58.b58encode(bytes([1])).decode()
-            )
-        ]
-    
-        logger.debug(f"Запрос пулов с фильтрами: {filters}")
-        logger.debug(f"Используется Program ID: {DLMM_PROGRAM_ID}")
-    
+        # Сначала делаем запрос без фильтров размера
         try:
             response = await self.solana_client.get_program_accounts(
                 DLMM_PROGRAM_ID,
-                filters
+                encoding="base64",
+                commitment=Commitment("confirmed")
             )
         
-            # Правильная проверка и логирование ответа
-            if response and hasattr(response, 'value'):
-                logger.debug(f"Получено пулов: {len(response.value)}")
-                if response.value:
-                    logger.debug(f"Первый пул в ответе: {response.value[0] if   response.value else None}")
-                return response.value
-            else:
-                logger.debug("Получен пустой ответ от RPC")
-                return []
+            if response and hasattr(response, 'value') and response.value:
+                # Логируем размер первого аккаунта
+                first_account = response.value[0]
+                if hasattr(first_account, 'account') and hasattr(first_account.account,     'data'):
+                    data_size = len(first_account.account.data)
+                    logger.info(f"Обнаружен размер данных аккаунта: {data_size} bytes")
+                
+                    # Теперь используем этот размер для фильтра
+                    filters = [
+                        {
+                            "dataSize": data_size
+                        }
+                    ]
+                
+                    # Повторяем запрос с правильным размером
+                    filtered_response = await self.solana_client.get_program_accounts(
+                        DLMM_PROGRAM_ID,
+                        encoding="base64",
+                        filters=filters,
+                        commitment=Commitment("confirmed")
+                    )
+                
+                    if filtered_response and hasattr(filtered_response, 'value'):
+                        logger.debug(f"Получено пулов с правильным размером:   {len(filtered_response.value)}")
+                        return filtered_response.value
+                    
+            logger.debug("Получен пустой ответ от RPC")
+            return []
             
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
