@@ -716,20 +716,20 @@ class PoolMonitor:
         self.processing = False
 
     async def _process_pools(self):
-    """Обработка пулов с оптимизированным получением данных"""
-    try:
-        filters = [
-            {"dataSize": DLMM_CONFIG["pool_size"]},
-            MemcmpOpts(
-                offset=0,
-                bytes=base58.b58encode(bytes([1])).decode()
-            )
-        ]
+        """Обработка пулов с оптимизированным получением данных"""
+        try:
+            filters = [
+                {"dataSize": DLMM_CONFIG["pool_size"]},
+                MemcmpOpts(
+                    offset=0,
+                    bytes=base58.b58encode(bytes([1])).decode()
+                )
+            ]
 
-        accounts = await self.solana_client.get_program_accounts(
-            DLMM_PROGRAM_ID,
-            filters
-        )
+            accounts = await self.solana_client.get_program_accounts(
+                DLMM_PROGRAM_ID,
+                filters
+            )
 
             if not accounts:
                 logger.warning("Не получены данные аккаунтов")
