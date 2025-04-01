@@ -180,15 +180,17 @@ class SolanaClient:
         self.rate_limit_reset = 0
 
     async def switch_endpoint(self):
-        """Переключение на следующий доступный RPC endpoint"""
-        old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
+    """Переключение на следующий доступный RPC endpoint"""
+    old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
+    
+    for _ in range(len(RPC_ENDPOINTS)):
         self.current_endpoint_index = (self.current_endpoint_index + 1) % len(RPC_ENDPOINTS)
+        new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
         
         try:
             if self.client:
                 await self.client.close()
             
-            new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
             self.client = AsyncClient(
                 new_endpoint["url"],
                 commitment=Commitment("confirmed"),
@@ -201,8 +203,11 @@ class SolanaClient:
             return True
             
         except Exception as e:
-            logger.error(f"❌ Ошибка при переключении RPC: {e}")
-            return False
+            logger.error(f"❌ Ошибка при подключении к {new_endpoint['url']}: {e}")
+            continue
+    
+    logger.critical("❌ Все RPC endpoints недоступны")
+    return False
 
     async def initialize(self):
         """Инициализация клиента с первым доступным RPC"""
@@ -227,15 +232,28 @@ class SolanaClient:
         retry_count = 0
         while retry_count < RPC_CONFIG["MAX_RETRIES"]:
             try:
-                # Используем фильтры напрямую, без дополнительной обработки [(1)]  (https://solana.com/docs/rpc/http/getprogramaccounts)
+                # Конвертируем фильтры в правильный формат
+                processed_filters = []
+                for f in filters:
+                    if isinstance(f, MemcmpOpts):
+                    processed_filters.append(f)
+                    elif isinstance(f, dict):
+                        if 'memcmp' in f:
+                            processed_filters.append(MemcmpOpts(
+                                offset=f['memcmp']['offset'],
+                                bytes=f['memcmp']['bytes']
+                            ))
+                        elif 'dataSize' in f:
+                            processed_filters.append({"dataSize": f['dataSize']})
+            
                 response = await self.client.get_program_accounts(
                     Pubkey.from_string(program_id),
                     encoding="base64",
-                    filters=filters,
+                    filters=processed_filters,
                     commitment=Commitment("confirmed")
                 )
                 return response
-            
+        
             except Exception as e:
                 logger.error(f"Ошибка при получении аккаунтов: {str(e)}")
                 retry_count += 1
@@ -703,24 +721,20 @@ class PoolMonitor:
         self.processing = False
 
     async def _process_pools(self):
-        """Обработка пулов с оптимизированным получением данных"""
-        try:
-            filters = [
-                {
-                    "dataSize": DLMM_CONFIG["pool_size"]
-                },
-                {
-                    "memcmp": {
-                        "offset": 0,
-                        "bytes": base58.b58encode(bytes([1])).decode()
-                    }
-                }
-            ]
-
-            accounts = await self.solana_client.get_program_accounts(
-                DLMM_PROGRAM_ID,
-                filters
+    """Обработка пулов с оптимизированным получением данных"""
+    try:
+        filters = [
+            {"dataSize": DLMM_CONFIG["pool_size"]},
+            MemcmpOpts(
+                offset=0,
+                bytes=base58.b58encode(bytes([1])).decode()
             )
+        ]
+
+        accounts = await self.solana_client.get_program_accounts(
+            DLMM_PROGRAM_ID,
+            filters
+        )
 
             if not accounts:
                 logger.warning("Не получены данные аккаунтов")
