@@ -700,37 +700,33 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         try:
-            filters = [
-                RpcFilterType::DataSize(165),
-                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, bytes([1])))
-            ]
-        
-            config = RpcProgramAccountsConfig {
-                filters: Some(filters),
-                account_config: RpcAccountInfoConfig {
-                    encoding: Some(UiAccountEncoding::JsonParsed),
-                    data_slice: None,
-                    commitment: Some(CommitmentConfig {
-                        commitment: CommitmentLevel::Finalized
-                    }),
-                    min_context_slot: None
-                },
-                ..Default::default()
+            config = {
+                "filters": [
+                    {
+                        "dataSize": 165
+                    },
+                    {
+                        "memcmp": {
+                            "offset": 0,
+                            "bytes": base58.b58encode(bytes([1])).decode()
+                        }
+                    }
+                ]
             }
         
             logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
-            response = await self.solana_client.send(
-                RpcRequest::GetProgramAccounts,
-                json!([DLMM_PROGRAM_ID.to_string(), config])
+            response = await self.solana_client.get_program_accounts(
+                DLMM_PROGRAM_ID,
+                config
             )
         
             if response and hasattr(response, 'value') and response.value:
                 return response.value
-                    
+                
             logger.debug("Получен пустой ответ от RPC")
             return []
-            
+        
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
             return []
