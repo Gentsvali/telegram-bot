@@ -224,40 +224,40 @@ class SolanaClient:
         return False
 
     async def get_program_accounts(self, program_id: str, filters: List = None):
-    """Получение аккаунтов программы с обработкой ошибок"""
-    retry_count = 0
-    while retry_count < RPC_CONFIG["MAX_RETRIES"]:
-        try:
-            formatted_filters = []
-            if filters:
-                for filter_item in filters:
-                    if isinstance(filter_item, dict):
-                        if "dataSize" in filter_item:
-                            formatted_filters.append({"dataSize": filter_item["dataSize"]})
-                        elif "memcmp" in filter_item:
-                            formatted_filters.append({
-                                "memcmp": {
-                                    "offset": filter_item["memcmp"]["offset"],
-                                    "bytes": filter_item["memcmp"]["bytes"]
-                                }
-                            })
+        """Получение аккаунтов программы с обработкой ошибок"""
+        retry_count = 0
+        while retry_count < RPC_CONFIG["MAX_RETRIES"]:
+            try:
+                formatted_filters = []
+                if filters:
+                    for filter_item in filters:
+                        if isinstance(filter_item, dict):
+                            if "dataSize" in filter_item:
+                                formatted_filters.append({"dataSize": filter_item["dataSize"]})
+                            elif "memcmp" in filter_item:
+                                formatted_filters.append({
+                                    "memcmp": {
+                                        "offset": filter_item["memcmp"]["offset"],
+                                        "bytes": filter_item["memcmp"]["bytes"]
+                                    }
+                                })
 
-            response = await self.client.get_program_accounts(
-                Pubkey.from_string(program_id),
-                encoding="base64",
-                filters=formatted_filters,
-                commitment=Commitment("confirmed")
-            )
-            return response
-            
-        except Exception as e:
-            logger.error(f"Ошибка при получении аккаунтов: {e}")
-            retry_count += 1
-            if retry_count < RPC_CONFIG["MAX_RETRIES"]:
-                await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
-                if not await self.switch_endpoint():
-                    break
-    return None
+                response = await self.client.get_program_accounts(
+                    Pubkey.from_string(program_id),
+                    encoding="base64",
+                    filters=formatted_filters,
+                    commitment=Commitment("confirmed")
+                )
+                return response
+             
+            except Exception as e:
+                logger.error(f"Ошибка при получении аккаунтов: {e}")
+                retry_count += 1
+                if retry_count < RPC_CONFIG["MAX_RETRIES"]:
+                    await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
+                    if not await self.switch_endpoint():
+                        break
+        return None
 
 # Создаем глобальный экземпляр клиента
 solana_client = SolanaClient()
