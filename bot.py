@@ -180,6 +180,31 @@ class SolanaClient:
         self.request_counter = 0
         self.rate_limit_reset = 0
 
+    async def switch_endpoint(self):
+        """Переключение на следующий доступный RPC endpoint"""
+        old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
+        self.current_endpoint_index = (self.current_endpoint_index + 1) % len(RPC_ENDPOINTS)
+        
+        try:
+            if self.client:
+                await self.client.close()
+            
+            new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
+            self.client = AsyncClient(
+                new_endpoint["url"],
+                commitment=Commitment("confirmed"),
+                timeout=RPC_CONFIG["DEFAULT_TIMEOUT"]
+            )
+            
+            # Проверяем новое подключение
+            await self.client.get_epoch_info()
+            logger.info(f"✅ Переключено с {old_endpoint} на {new_endpoint['url']}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при переключении RPC: {e}")
+            return False
+
     async def initialize(self):
         """Инициализация клиента с первым доступным RPC"""
         for endpoint in RPC_ENDPOINTS:
@@ -199,39 +224,40 @@ class SolanaClient:
         return False
 
     async def get_program_accounts(self, program_id: str, filters: List = None):
-        """Получение аккаунтов программы с обработкой ошибок и повторными попытками"""
-        retry_count = 0
-        while retry_count < RPC_CONFIG["MAX_RETRIES"]:  # Используем повторные попытки [(2)](https://solana.com/developers/guides/advanced/retry)
-            try:
-                formatted_filters = []
-                if filters:
-                    for filter_item in filters:
-                        if isinstance(filter_item, dict):
-                            formatted_filters.append(filter_item)
-                        elif isinstance(filter_item, MemcmpOpts):  # Для memcmp фильтров [(3)](https://solana.stackexchange.com/questions/790/query-accounts-with-filters)
+    """Получение аккаунтов программы с обработкой ошибок"""
+    retry_count = 0
+    while retry_count < RPC_CONFIG["MAX_RETRIES"]:
+        try:
+            formatted_filters = []
+            if filters:
+                for filter_item in filters:
+                    if isinstance(filter_item, dict):
+                        if "dataSize" in filter_item:
+                            formatted_filters.append({"dataSize": filter_item["dataSize"]})
+                        elif "memcmp" in filter_item:
                             formatted_filters.append({
                                 "memcmp": {
-                                    "offset": filter_item.offset,
-                                    "bytes": filter_item.bytes
+                                    "offset": filter_item["memcmp"]["offset"],
+                                    "bytes": filter_item["memcmp"]["bytes"]
                                 }
                             })
 
-                response = await self.client.get_program_accounts(
-                    Pubkey.from_string(program_id),
-                    encoding="base64",
-                    filters=formatted_filters,
-                    commitment=Commitment("confirmed")  # Используем правильный класс Commitment [(1)](https://solana.stackexchange.com/questions/15682/anchor-solana-where-to-specify-commitment-level)
-                )
-                return response
-
-            except Exception as e:
-                logger.error(f"Ошибка при получении аккаунтов: {e}")
-                retry_count += 1
-                if retry_count < RPC_CONFIG["MAX_RETRIES"]:
-                    await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
-                    if not await self.switch_endpoint():
-                        break
-        return None
+            response = await self.client.get_program_accounts(
+                Pubkey.from_string(program_id),
+                encoding="base64",
+                filters=formatted_filters,
+                commitment=Commitment("confirmed")
+            )
+            return response
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении аккаунтов: {e}")
+            retry_count += 1
+            if retry_count < RPC_CONFIG["MAX_RETRIES"]:
+                await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
+                if not await self.switch_endpoint():
+                    break
+    return None
 
 # Создаем глобальный экземпляр клиента
 solana_client = SolanaClient()
@@ -676,14 +702,80 @@ def setup_bot_handlers(app, fm):
 setup_bot_handlers(application, filter_manager)
 
 class PoolMonitor:
-    """Монитор пулов с улучшенной обработкой ошибок и производительностью"""
-    
     def __init__(self, solana_client, filter_manager):
         self.solana_client = solana_client
         self.filter_manager = filter_manager
         self.pool_cache = {}
         self.last_update = {}
         self.processing = False
+
+    async def _process_pools(self):
+        """Обработка пулов с оптимизированным получением данных"""
+        try:
+            filters = [
+                {
+                    "dataSize": DLMM_CONFIG["pool_size"]
+                },
+                {
+                    "memcmp": {
+                        "offset": 0,
+                        "bytes": base58.b58encode(bytes([1])).decode()
+                    }
+                }
+            ]
+
+            accounts = await self.solana_client.get_program_accounts(
+                DLMM_PROGRAM_ID,
+                filters
+            )
+
+            if not accounts:
+                logger.warning("Не получены данные аккаунтов")
+                return
+
+            processed_count = 0
+            new_pools_count = 0
+
+            for account in accounts.value:
+                try:
+                    if not hasattr(account, 'account'):
+                        continue
+
+                    pool_address = str(account.pubkey)
+                    
+                    if pool_address in self.pool_cache:
+                        last_update = self.last_update.get(pool_address, 0)
+                        if time.time() - last_update < DLMM_CONFIG["update_interval"]:
+                            continue
+
+                    decoded_data = PoolDataDecoder.decode_pool_data(account.account.data)
+                    if not decoded_data:
+                        continue
+
+                    decoded_data['address'] = pool_address
+
+                    self.pool_cache[pool_address] = decoded_data
+                    self.last_update[pool_address] = time.time()
+                    processed_count += 1
+
+                    if pool_address not in self.pool_cache:
+                        new_pools_count += 1
+                        message = format_pool_message(decoded_data)
+                        if message:
+                            await send_pool_notification(message)
+
+                except Exception as e:
+                    logger.error(f"Ошибка обработки пула {getattr(account, 'pubkey', 'unknown')}: {e}")
+                    continue
+
+            logger.info(
+                f"Обработано пулов: {processed_count}, "
+                f"Новых пулов: {new_pools_count}"
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка при обработке пулов: {e}")
+            raise
 
     async def start_monitoring(self):
         """Запуск мониторинга пулов"""
