@@ -700,31 +700,34 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         try:
-            config = {
-                "filters": [
-                    {
-                        "dataSize": 165  # или размер ваших данных
-                    },
-                    {
-                        "memcmp": {
-                            "offset": 0,
-                            "bytes": base58.b58encode(bytes([1])).decode()  # ваши данные для сравнения
-                        }
+            filters = [
+                {
+                    "dataSize": 165
+                },
+                {
+                    "memcmp": {
+                        "offset": 0,
+                        "bytes": base58.b58encode(bytes([1])).decode()
                     }
-                ],
-                "encoding": "base64"  # или другая поддерживаемая кодировка
+                }
+            ]
+        
+            config = {
+                "encoding": "base64",
+                "filters": filters
             }
         
             logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
             response = await self.solana_client.get_program_accounts(
                 DLMM_PROGRAM_ID,
-                config
+                encoding="base64",  # Передаем encoding отдельно
+                filters=filters     # Передаем filters отдельно
             )
         
             if response and hasattr(response, 'value') and response.value:
                 first_account = response.value[0]
-                if hasattr(first_account, 'account') and hasattr(first_account.account, 'data'):
+                if hasattr(first_account, 'account') and hasattr(first_account.account,  'data'):
                     data_size = len(first_account.account.data)
                     logger.info(f"Обнаружен размер данных аккаунта: {data_size} bytes")
                     return response.value
