@@ -709,9 +709,10 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         filters = [
-            {
-                "dataSize": DLMM_CONFIG["pool_size"]
-            },
+            MemcmpOpts(
+                offset=0,
+                bytes=base58.b58encode(bytes([1])).decode()
+            ),
             MemcmpOpts(
                 offset=0,
                 bytes=base58.b58encode(bytes([1])).decode()
