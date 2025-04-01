@@ -36,7 +36,6 @@ import base64
 # Настройка логгера с ротацией файлов
 from logging.handlers import RotatingFileHandler
 
-const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 # Константы RPC и настройки подключения
 RPC_CONFIG = {
     "MAX_RETRIES": 3,
