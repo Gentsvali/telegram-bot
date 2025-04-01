@@ -147,7 +147,6 @@ PORT = int(os.environ.get("PORT", 10000))
 application = (
     ApplicationBuilder()
     .token(TELEGRAM_TOKEN)
-    .updater(None)  # Отключаем polling, т.к. используем webhook
     .build()
 )
 
@@ -923,7 +922,11 @@ class WebhookServer:
                     raise Exception("Ошибка инициализации мониторинга")
         
                 # Устанавливаем webhook
-                await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+                await application.bot.set_webhook(
+                    f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
+                    allowed_updates=Update.ALL_TYPES,
+                    drop_pending_updates=True  # рекомендуется добавить
+                )
 
                 logger.info("🚀 Сервер успешно запущен")
             except Exception as e:
