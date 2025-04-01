@@ -162,30 +162,6 @@ async def initialize(self):
             continue
     return False
 
-async def switch_endpoint(self):
-        """Переключение на следующий доступный RPC endpoint"""
-        old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
-        self.current_endpoint_index = (self.current_endpoint_index + 1) % len(RPC_ENDPOINTS)
-        
-        try:
-            await self.client.close()  # Закрываем старое подключение
-            
-            new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
-            self.client = AsyncClient(
-                new_endpoint["url"],
-                commitment=RPC_CONFIG["COMMITMENT"],
-                timeout=RPC_CONFIG["DEFAULT_TIMEOUT"]
-            )
-            
-            # Проверяем новое подключение
-            await self.client.get_epoch_info()
-            logger.info(f"✅ Переключено с {old_endpoint} на {new_endpoint['url']}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка при переключении RPC: {e}")
-            return False
-
 async def get_program_accounts(self, program_id: str, filters: List = None):
     """Получение аккаунтов программы с обработкой ошибок"""
     retry_count = 0
@@ -211,17 +187,9 @@ async def get_program_accounts(self, program_id: str, filters: List = None):
                 Pubkey.from_string(program_id),
                 encoding="base64",
                 filters=formatted_filters,
-                commitment=RPC_CONFIG["COMMITMENT"]
+                commitment="confirmed"
             )
             return response
-            
-        except SolanaRpcException as e:
-            if "Rate limit exceeded" in str(e):
-                await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
-            elif "Connection refused" in str(e):
-                if not await self.switch_endpoint():
-                    await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"] * 2)
-            retry_count += 1
             
         except Exception as e:
             logger.error(f"Неожиданная ошибка при получении аккаунтов: {e}")
