@@ -32,6 +32,11 @@ from solana.rpc.types import MemcmpOpts
 from solders.pubkey import Pubkey
 import base58
 import base64
+from solana_client import (
+    rpc_config::RpcProgramAccountsConfig,
+    rpc_filter::{Memcmp, RpcFilterType},
+    rpc_request::RpcRequest,
+)
 
 # Настройка логгера с ротацией файлов
 from logging.handlers import RotatingFileHandler
@@ -700,33 +705,33 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         try:
-            config = {
-                "filters": [
-                    {
-                        "dataSize": 165
-                    },
-                    {
-                        "memcmp": {
-                            "offset": 0,
-                            "bytes": base58.b58encode(bytes([1])).decode()
-                        }
-                    }
-                ]
+            filters = [
+                RpcFilterType::DataSize(165),
+                RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, bytes([1])))
+            ]
+        
+            config = RpcProgramAccountsConfig {
+                filters: Some(filters),
+                account_config: RpcAccountInfoConfig {
+                    encoding: Some(UiAccountEncoding::JsonParsed),
+                    data_slice: None,
+                    commitment: Some(CommitmentConfig {
+                        commitment: CommitmentLevel::Finalized
+                    }),
+                    min_context_slot: None
+                },
+                ..Default::default()
             }
         
             logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
-            response = await self.solana_client.get_program_accounts(
-                DLMM_PROGRAM_ID,
-                config  # Передаем всю конфигурацию одним объектом
+            response = await self.solana_client.send(
+                RpcRequest::GetProgramAccounts,
+                json!([DLMM_PROGRAM_ID.to_string(), config])
             )
         
             if response and hasattr(response, 'value') and response.value:
-                first_account = response.value[0]
-                if hasattr(first_account, 'account') and hasattr(first_account.account, 'data'):
-                    data_size = len(first_account.account.data)
-                    logger.info(f"Обнаружен размер данных аккаунта: {data_size} bytes")
-                    return response.value
+                return response.value
                     
             logger.debug("Получен пустой ответ от RPC")
             return []
