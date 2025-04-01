@@ -180,10 +180,10 @@ class SolanaClient:
         self.rate_limit_reset = 0
 
     async def switch_endpoint(self):
-    """Переключение на следующий доступный RPC endpoint"""
-    old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
+        """Переключение на следующий доступный RPC endpoint"""
+        old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
     
-    for _ in range(len(RPC_ENDPOINTS)):
+        for _ in range(len(RPC_ENDPOINTS)):
         self.current_endpoint_index = (self.current_endpoint_index + 1) % len(RPC_ENDPOINTS)
         new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
         
