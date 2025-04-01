@@ -709,31 +709,34 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         filters = [
+            {
+                "dataSize": DLMM_CONFIG["pool_size"]
+            },
             MemcmpOpts(
                 offset=0,
                 bytes=base58.b58encode(bytes([1])).decode()
             )
         ]
-        
-        # Добавляем логирование
+    
         logger.debug(f"Запрос пулов с фильтрами: {filters}")
         logger.debug(f"Используется Program ID: {DLMM_PROGRAM_ID}")
-
+    
         try:
             response = await self.solana_client.get_program_accounts(
                 DLMM_PROGRAM_ID,
                 filters
             )
-
-            # Добавляем логирование результата
-            if response:
-                logger.debug(f"Получено пулов: {len(response)}")
-                logger.debug(f"Первый пул в ответе: {response[0] if response else None}")
+        
+            # Правильная проверка и логирование ответа
+            if response and hasattr(response, 'value'):
+                logger.debug(f"Получено пулов: {len(response.value)}")
+                if response.value:
+                    logger.debug(f"Первый пул в ответе: {response.value[0] if   response.value else None}")
+                return response.value
             else:
                 logger.debug("Получен пустой ответ от RPC")
+                return []
             
-            return response.value if response else []
-        
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
             return []
