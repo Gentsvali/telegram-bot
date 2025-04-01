@@ -46,15 +46,8 @@ RPC_CONFIG = {
 }
 
 DEFAULT_FILTERS = {
-    "disable_filters": False,
-    "bin_steps": [20, 80, 100, 125, 250],  # Допустимые шаги корзин
-    "min_tvl": 10.0,  # Минимальный TVL (в SOL)
-    "base_fee_min": 0.1,  # Минимальная базовая комиссия (в %)
-    "base_fee_max": 10.0,  # Максимальная базовая комиссия (в %)
-    "volume_1h_min": 10.0,  # Минимальный объем за 1 час (в SOL)
-    "volume_5m_min": 1.0,  # Минимальный объем за 5 минут (в SOL)
-    "fee_tvl_ratio_24h_min": 0.1,  # Минимальное отношение комиссии к TVL за 24 часа (в %)
-    "dynamic_fee_tvl_ratio_min": 0.5,  # Минимальное отношение динамической комиссии к TVL (в %)
+    "min_tvl": 10.0,
+    "volume_5m_min": 1.0
 }
 
 # Добавляем недостающие константы
@@ -67,10 +60,9 @@ DLMM_CONFIG = {
 
 # Константы для работы с транзакциями [(2)](https://solana.com/developers/guides/advanced/retry)
 TX_CONFIG = {
-    "PREFLIGHT_COMMITMENT": "confirmed",
-    "MAX_RETRIES": 3,
-    "RETRY_DELAY": 1,
-    "TIMEOUT": 30
+    "retries": 3,
+    "timeout": 30,
+    "delay_between_retries": 1
 }
 
 # Константы для compute budget [(4)](https://solana.com/developers/guides/advanced/how-to-request-optimal-compute)
@@ -81,10 +73,16 @@ COMPUTE_BUDGET = {
 
 # Обновленные RPC эндпоинты с приоритетами
 RPC_ENDPOINTS = [
-    {"url": os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com"), "priority": 1},
-    {"url": "https://rpc.ankr.com/solana", "priority": 2},
-    {"url": "https://ssc-dao.genesysgo.net", "priority": 3},
-    {"url": "https://solana-rpc.publicnode.com", "priority": 4}
+    {
+        'url': 'https://solana-rpc.publicnode.com',
+        'priority': 1,
+        'timeout': 10
+    },
+    {
+        'url': 'https://api.mainnet-beta.solana.com', 
+        'priority': 2,
+        'timeout': 15
+    }
 ]
 
 # Настройка логгера
@@ -174,89 +172,65 @@ async def init_monitoring():
 
 class SolanaClient:
     def __init__(self):
-        self.current_endpoint_index = 0
+        self.current_endpoint = RPC_ENDPOINTS[0]
         self.client = None
-        self.last_request_time = 0
-        self.request_counter = 0
-        self.rate_limit_reset = 0
-
-    async def switch_endpoint(self):
-        """Переключение на следующий доступный RPC endpoint"""
-        old_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]["url"]
-        self.current_endpoint_index = (self.current_endpoint_index + 1) % len(RPC_ENDPOINTS)
-    
-        try:
-            if self.client:
-                await self.client.close()
-        
-            new_endpoint = RPC_ENDPOINTS[self.current_endpoint_index]
-            self.client = AsyncClient(
-                new_endpoint["url"],
-                commitment=Commitment("confirmed"),
-                timeout=RPC_CONFIG["DEFAULT_TIMEOUT"]
-            )
-        
-            # Проверяем новое подключение
-            await self.client.get_epoch_info()
-            logger.info(f"✅ Переключено с {old_endpoint} на {new_endpoint['url']}")
-            return True
-        
-        except Exception as e:
-            logger.error(f"❌ Ошибка при переключении RPC: {e}")
-            return False
 
     async def initialize(self):
-        """Инициализация клиента с первым доступным RPC"""
-        for endpoint in RPC_ENDPOINTS:
+        """Инициализация с автоматическим выбором рабочего RPC"""
+        for endpoint in sorted(RPC_ENDPOINTS, key=lambda x: x['priority']):
             try:
                 self.client = AsyncClient(
-                    endpoint["url"],
-                    commitment=Commitment("confirmed"),  # Используем правильный класс Commitment [(1)](https://solana.stackexchange.com/questions/15682/anchor-solana-where-to-specify-commitment-level)
-                    timeout=RPC_CONFIG["DEFAULT_TIMEOUT"]
+                    endpoint['url'],
+                    timeout=endpoint['timeout'],
+                    commitment=Commitment("confirmed")
                 )
-                # Проверяем подключение
                 await self.client.get_epoch_info()
+                self.current_endpoint = endpoint
                 logger.info(f"✅ Подключено к RPC: {endpoint['url']}")
                 return True
             except Exception as e:
-                logger.warning(f"❌ Не удалось подключиться к {endpoint['url']}: {e}")
-                continue
+                logger.warning(f"❌ Ошибка подключения к {endpoint['url']}: {e}")
         return False
 
-    async def get_program_accounts(self, program_id: str, filters: List = None):
-        """Получение аккаунтов программы с обработкой ошибок"""
-        retry_count = 0
-        while retry_count < RPC_CONFIG["MAX_RETRIES"]:
+    async def switch_endpoint(self):
+        """Переключение между двумя нодами"""
+        old_url = self.current_endpoint['url']
+        new_endpoint = next(
+            (ep for ep in RPC_ENDPOINTS if ep['url'] != old_url), 
+            RPC_ENDPOINTS[0]
+        )
+        
+        try:
+            await self.client.close()
+            self.client = AsyncClient(
+                new_endpoint['url'],
+                timeout=new_endpoint['timeout'],
+                commitment=Commitment("confirmed")
+            )
+            await self.client.get_epoch_info()
+            self.current_endpoint = new_endpoint
+            logger.info(f"✅ Переключено {old_url} → {new_endpoint['url']}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка переключения: {e}")
+            return False
+
+    async def get_program_accounts(self, program_id: str, filters: list):
+        """Упрощённый запрос с автоматическим переключением"""
+        for attempt in range(3):
             try:
-                # Конвертируем фильтры в правильный формат
-                processed_filters = []
-                for f in filters:
-                    if isinstance(f, MemcmpOpts):
-                        processed_filters.append(f)
-                    elif isinstance(f, dict):
-                        if 'memcmp' in f:
-                            processed_filters.append(MemcmpOpts(
-                                offset=f['memcmp']['offset'],
-                                bytes=f['memcmp']['bytes']
-                            ))
-                        elif 'dataSize' in f:
-                            processed_filters.append({"dataSize": f['dataSize']})
-            
                 response = await self.client.get_program_accounts(
                     Pubkey.from_string(program_id),
                     encoding="base64",
-                    filters=processed_filters,
+                    filters=filters,
                     commitment=Commitment("confirmed")
                 )
                 return response
-        
             except Exception as e:
-                logger.error(f"Ошибка при получении аккаунтов: {str(e)}")
-                retry_count += 1
-                if retry_count < RPC_CONFIG["MAX_RETRIES"]:
-                    await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
-                    if not await self.switch_endpoint():
-                        break
+                logger.warning(f"Попытка {attempt+1} не удалась: {str(e)}")
+                if not await self.switch_endpoint():
+                    break
+                await asyncio.sleep(1)
         return None
 
 # Создаем глобальный экземпляр клиента
@@ -709,203 +683,79 @@ def setup_bot_handlers(app, fm):
 setup_bot_handlers(application, filter_manager)
 
 class PoolMonitor:
-    def __init__(self, solana_client, filter_manager):
+    def __init__(self, solana_client):
+        """
+        Упрощенный монитор пулов с двумя RPC
+        :param solana_client: экземпляр SolanaClient
+        """
         self.solana_client = solana_client
-        self.filter_manager = filter_manager
-        self.pool_cache = {}
-        self.last_update = {}
-        self.processing = False
-
-    async def _process_pools(self):
-        """Обработка пулов с оптимизированным получением данных"""
+        self.pools_cache = {}
+        self.last_update = datetime.now()
+        
+    async def _get_pools_data(self):
+        """Получение данных пулов с базовой обработкой ошибок"""
+        filters = [
+            {"dataSize": 108},  # Фиксированный размер данных пула
+            {
+                "memcmp": {
+                    "offset": 0,
+                    "bytes": base58.b58encode(bytes([1])).decode()
+                }
+            }
+        ]
+        
         try:
-            filters = [
-                {"dataSize": DLMM_CONFIG["pool_size"]},
-                MemcmpOpts(
-                    offset=0,
-                    bytes=base58.b58encode(bytes([1])).decode()
-                )
-            ]
-
-            accounts = await self.solana_client.get_program_accounts(
-                DLMM_PROGRAM_ID,
+            response = await self.solana_client.get_program_accounts(
+                "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",  # DLMM program ID
                 filters
             )
-
-            if not accounts:
-                logger.warning("Не получены данные аккаунтов")
-                return
-
-            processed_count = 0
-            new_pools_count = 0
-
-            for account in accounts.value:
-                try:
-                    if not hasattr(account, 'account'):
-                        continue
-
-                    pool_address = str(account.pubkey)
-                    
-                    if pool_address in self.pool_cache:
-                        last_update = self.last_update.get(pool_address, 0)
-                        if time.time() - last_update < DLMM_CONFIG["update_interval"]:
-                            continue
-
-                    decoded_data = PoolDataDecoder.decode_pool_data(account.account.data)
-                    if not decoded_data:
-                        continue
-
-                    decoded_data['address'] = pool_address
-
-                    self.pool_cache[pool_address] = decoded_data
-                    self.last_update[pool_address] = time.time()
-                    processed_count += 1
-
-                    if pool_address not in self.pool_cache:
-                        new_pools_count += 1
-                        message = format_pool_message(decoded_data)
-                        if message:
-                            await send_pool_notification(message)
-
-                except Exception as e:
-                    logger.error(f"Ошибка обработки пула {getattr(account, 'pubkey', 'unknown')}: {e}")
-                    continue
-
-            logger.info(
-                f"Обработано пулов: {processed_count}, "
-                f"Новых пулов: {new_pools_count}"
-            )
-
+            return response.value if response else []
         except Exception as e:
-            logger.error(f"Ошибка при обработке пулов: {e}")
-            raise
+            logger.error(f"Ошибка получения данных пулов: {e}")
+            return []
 
-    async def start_monitoring(self):
-        """Запуск мониторинга пулов"""
-        self.processing = True
-        while self.processing:
-            try:
-                await self._process_pools()
-                await asyncio.sleep(DLMM_CONFIG["update_interval"])
-            except Exception as e:
-                logger.error(f"Ошибка в цикле мониторинга: {e}")
-                await asyncio.sleep(DLMM_CONFIG["retry_delay"])
-
-    async def stop_monitoring(self):
-        """Остановка мониторинга"""
-        self.processing = False
-
-async def _process_pools(self):
-    """Обработка пулов с оптимизированным получением данных"""
-    try:
-        # Используем правильные фильтры [(3)](https://solana.stackexchange.com/questions/790/query-accounts-with-filters)
-        filters = [
-            {"dataSize": DLMM_CONFIG["pool_size"]},
-            MemcmpOpts(
-                offset=0,
-                bytes=base58.b58encode(bytes([1])).decode()
-            )
-        ]
-
-        accounts = await self.solana_client.get_program_accounts(
-            DLMM_PROGRAM_ID,
-            filters
-        )
-
-        if not accounts:
-            logger.warning("Не получены данные аккаунтов")
-            return
-
-        processed_count = 0
-        new_pools_count = 0
-
-        for account in accounts.value:
-            try:
-                if not hasattr(account, 'account'):
-                    continue
-
+    async def refresh_pools(self):
+        """Основной метод обновления данных пулов"""
+        try:
+            current_time = datetime.now()
+            accounts = await self._get_pools_data()
+            
+            if not accounts:
+                logger.warning("Получен пустой список пулов")
+                return False
+                
+            new_pools = 0
+            updated_pools = 0
+            
+            for account in accounts:
                 pool_address = str(account.pubkey)
                 
-                # Проверяем кэш и время обновления
-                if pool_address in self.pool_cache:
-                    last_update = self.last_update.get(pool_address, 0)
-                    if time.time() - last_update < DLMM_CONFIG["update_interval"]:
-                        continue
+                # Обновляем только если пул новый или изменились данные
+                if pool_address not in self.pools_cache or \
+                   self.pools_cache[pool_address].account.data != account.account.data:
+                    self.pools_cache[pool_address] = account
+                    if pool_address not in self.pools_cache:
+                        new_pools += 1
+                    else:
+                        updated_pools += 1
 
-                # Декодируем данные
-                decoded_data = PoolDataDecoder.decode_pool_data(account.account.data)
-                if not decoded_data:
-                    continue
-
-                # Добавляем адрес пула
-                decoded_data['address'] = pool_address
-
-                # Обновляем кэш и счетчики
-                self.pool_cache[pool_address] = decoded_data
-                self.last_update[pool_address] = time.time()
-                processed_count += 1
-
-                # Проверяем новый ли это пул
-                if pool_address not in self.pool_cache:
-                    new_pools_count += 1
-                    await self._handle_new_pool(decoded_data)
-
-            except Exception as e:
-                logger.error(f"Ошибка обработки пула {getattr(account, 'pubkey', 'unknown')}: {e}")
-                continue
-
-        logger.info(
-            f"Обработано пулов: {processed_count}, "
-            f"Новых пулов: {new_pools_count}"
-        )
-
-    except Exception as e:
-        logger.error(f"Ошибка при обработке пулов: {e}")
-        raise
-
-    async def force_check(self):
-        """Принудительная проверка пулов"""
-        try:
-            # Очищаем кэш для полной проверки
-            self.pool_cache.clear()
-            self.last_update.clear()
-            
-            await self._process_pools()
+            self.last_update = current_time
+            logger.info(
+                f"Обновлено пулов: {len(accounts)} | "
+                f"Новых: {new_pools} | "
+                f"Измененных: {updated_pools}"
+            )
             return True
+            
         except Exception as e:
-            logger.error(f"Ошибка при принудительной проверке: {e}")
+            logger.error(f"Критическая ошибка в refresh_pools: {e}")
             return False
 
-    def get_pool_stats(self):
-        """Получение статистики по пулам"""
-        return {
-            "total_pools": len(self.pool_cache),
-            "last_update": max(self.last_update.values()) if self.last_update else 0,
-            "monitored_since": min(self.last_update.values()) if self.last_update else 0
-        }
-
-# Создаем глобальный экземпляр монитора
-pool_monitor = PoolMonitor(solana_client, filter_manager)
-
-async def init_monitoring():
-    """Инициализация системы мониторинга"""
-    try:
-        # Инициализация Solana клиента
-        if not await solana_client.initialize():
-            raise Exception("Не удалось инициализировать Solana клиент")
-
-        # Загрузка фильтров
-        if not await filter_manager.load_filters():
-            logger.warning("Используются фильтры по умолчанию")
-
-        # Запуск мониторинга
-        asyncio.create_task(pool_monitor.start_monitoring())
-        logger.info("✅ Мониторинг пулов запущен")
-        return True
-
-    except Exception as e:
-        logger.error(f"Ошибка инициализации мониторинга: {e}")
-        return False
+    async def start_monitoring(self, interval=60):
+        """Запуск периодического мониторинга"""
+        while True:
+            success = await self.refresh_pools()
+            await asyncio.sleep(interval if success else 5)  # При ошибках уменьшаем интервал
 
 class WebhookServer:
     def __init__(self, application, pool_monitor, filter_manager):
