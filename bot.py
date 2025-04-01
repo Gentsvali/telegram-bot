@@ -709,9 +709,10 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         try:
-            # Делаем запрос без дополнительных параметров
+            # Передаем пустой список фильтров
             response = await self.solana_client.get_program_accounts(
-                DLMM_PROGRAM_ID
+                DLMM_PROGRAM_ID,
+                filters=[]  # Пустой список фильтров
             )
         
             if response and hasattr(response, 'value') and response.value:
@@ -720,8 +721,6 @@ class PoolMonitor:
                 if hasattr(first_account, 'account') and hasattr(first_account.account, 'data'):
                     data_size = len(first_account.account.data)
                     logger.info(f"Обнаружен размер данных аккаунта: {data_size} bytes")
-                
-                    # После того как узнаем размер, можно будет добавить фильтры
                     return response.value
                     
             logger.debug("Получен пустой ответ от RPC")
