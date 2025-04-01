@@ -228,30 +228,17 @@ class SolanaClient:
         retry_count = 0
         while retry_count < RPC_CONFIG["MAX_RETRIES"]:
             try:
-                formatted_filters = []
-                if filters:
-                    for filter_item in filters:
-                        if isinstance(filter_item, dict):
-                            if "dataSize" in filter_item:
-                                formatted_filters.append({"dataSize": filter_item["dataSize"]})
-                            elif "memcmp" in filter_item:
-                                formatted_filters.append({
-                                    "memcmp": {
-                                        "offset": filter_item["memcmp"]["offset"],
-                                        "bytes": filter_item["memcmp"]["bytes"]
-                                    }
-                                })
-
+                # Используем фильтры напрямую, без дополнительной обработки [(1)]  (https://solana.com/docs/rpc/http/getprogramaccounts)
                 response = await self.client.get_program_accounts(
                     Pubkey.from_string(program_id),
                     encoding="base64",
-                    filters=formatted_filters,
+                    filters=filters,
                     commitment=Commitment("confirmed")
                 )
                 return response
-             
+            
             except Exception as e:
-                logger.error(f"Ошибка при получении аккаунтов: {e}")
+                logger.error(f"Ошибка при получении аккаунтов: {str(e)}")
                 retry_count += 1
                 if retry_count < RPC_CONFIG["MAX_RETRIES"]:
                     await asyncio.sleep(RPC_CONFIG["RETRY_DELAY"])
@@ -698,6 +685,13 @@ def setup_bot_handlers(app, fm):
     
     for handler in handlers:
         app.add_handler(handler)
+
+    async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ошибок"""
+        logger.error(f"Ошибка при обработке обновления {update}: {context.error}")
+        
+    # Добавьте обработчик ошибок
+    app.add_error_handler(error_handler)
 
 setup_bot_handlers(application, filter_manager)
 
