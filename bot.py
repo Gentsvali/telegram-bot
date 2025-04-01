@@ -825,29 +825,29 @@ class WebhookServer:
     def setup_routes(self):
         """Настройка маршрутов с обработкой ошибок"""
         
-       @self.app.before_serving
-async def startup():
-    """Инициализация при запуске"""
-    try:
-        # Инициализируем Solana клиент
-        if not await solana_client.initialize():
-            logger.error("Не удалось инициализировать Solana клиент")
-            raise Exception("Ошибка инициализации Solana клиента")
+        @self.app.before_serving
+        async def startup():
+            """Инициализация при запуске"""
+            try:
+                # Инициализируем Solana клиент
+                if not await solana_client.initialize():
+                logger.error("Не удалось инициализировать Solana клиент")
+                    raise Exception("Ошибка инициализации Solana клиента")
 
-        # Инициализируем Telegram приложение
-        await application.initialize()
+                # Инициализируем Telegram приложение
+                await application.initialize()
         
-        # Инициализируем мониторинг
-        if not await init_monitoring():
-            raise Exception("Ошибка инициализации мониторинга")
+                # Инициализируем мониторинг
+                if not await init_monitoring():
+                    raise Exception("Ошибка инициализации мониторинга")
         
-        # Устанавливаем webhook
-        await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
+                # Устанавливаем webhook
+                await application.bot.set_webhook(f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}")
 
-        logger.info("🚀 Сервер успешно запущен")
-    except Exception as e:
-        logger.error(f"Критическая ошибка при запуске: {e}")
-        sys.exit(1)
+                logger.info("🚀 Сервер успешно запущен")
+            except Exception as e:
+                logger.error(f"Критическая ошибка при запуске: {e}")
+                sys.exit(1)
 
         @self.app.after_serving
         async def shutdown():
