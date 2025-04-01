@@ -760,7 +760,7 @@ class PoolMonitor:
 pool_monitor = PoolMonitor(solana_client)
 
 class WebhookServer:
-    def __init__(self, application, pool_monitor, filter_manager):
+    def __init__(self, application, pool_monitor):
         self.app = Quart(__name__)
         self.telegram_app = application
         self.pool_monitor = pool_monitor
