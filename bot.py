@@ -36,12 +36,14 @@ import base64
 # Настройка логгера с ротацией файлов
 from logging.handlers import RotatingFileHandler
 
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 # Константы RPC и настройки подключения
 RPC_CONFIG = {
-    "DEFAULT_TIMEOUT": 30,
     "MAX_RETRIES": 3,
     "RETRY_DELAY": 1,
-    "COMMITMENT": "confirmed"
+    "DEFAULT_TIMEOUT": 30,
+    "MAX_REQUESTS_PER_10_SEC": 40,  # Максимум запросов за 10 секунд
+    "MAX_CONCURRENT_REQUESTS": 40,   # Максимум одновременных подключений
 }
 
 DEFAULT_FILTERS = {
