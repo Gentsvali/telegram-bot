@@ -215,29 +215,20 @@ class SolanaClient:
             logger.error(f"❌ Ошибка переключения: {e}")
             return False
 
-    async def get_program_accounts(self, program_id: str, filters: list):
+    async def get_program_accounts(self, program_id: str, config):
         """Упрощённый запрос с автоматическим переключением"""
         for attempt in range(3):
             try:
-                # Добавляем логирование запроса
                 logger.debug(f"Отправка запроса к RPC: {self.current_endpoint['url']}")
-                logger.debug(f"Program ID: {program_id}")
-                logger.debug(f"Фильтры: {filters}")
+                logger.debug(f"ID программы: {program_id}")
+                logger.debug(f"Конфигурация: {config}")
             
                 response = await self.client.get_program_accounts(
                     Pubkey.from_string(program_id),
-                    encoding="base64",
-                    filters=filters,
-                    commitment=Commitment("confirmed")
+                    config
                 )
             
-                # Добавляем логирование ответа
                 logger.debug(f"Получен ответ: {response}")
-                if response and hasattr(response, 'value'):
-                    logger.debug(f"Количество аккаунтов в ответе: {len(response.value)}")
-                else:
-                    logger.debug("Ответ пустой или не содержит value")
-                
                 return response
             
             except Exception as e:
@@ -709,14 +700,22 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с базовой обработкой ошибок"""
         try:
-            # Передаем пустой список фильтров
+            # Используем RpcProgramAccountsConfig
+            from solana_client import RpcProgramAccountsConfig
+            from solana.rpc.types import MemcmpOpts
+        
+            config = RpcProgramAccountsConfig(
+                filters=[]
+            )
+        
+            logger.debug(f"Отправка запроса с конфигурацией: {config}")
+        
             response = await self.solana_client.get_program_accounts(
                 DLMM_PROGRAM_ID,
-                filters=[]  # Пустой список фильтров
+                config
             )
         
             if response and hasattr(response, 'value') and response.value:
-                # Логируем размер первого аккаунта
                 first_account = response.value[0]
                 if hasattr(first_account, 'account') and hasattr(first_account.account, 'data'):
                     data_size = len(first_account.account.data)
