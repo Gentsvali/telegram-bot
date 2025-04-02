@@ -738,26 +738,20 @@ class PoolMonitor:
             # Создаем программный ключ
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
 
-            # Делаем самый простой запрос без фильтров
-            config = {
-                "encoding": "base64"
-            }
-
             logger.info("Пробуем получить все аккаунты программы без фильтров")
         
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                config
+                encoding="base64"  # Только encoding без доп. конфигурации
             )
 
             if response and hasattr(response, 'value'):
                 account_count = len(response.value) if response.value else 0
                 logger.info(f"Найдено аккаунтов: {account_count}")
             
-                # Если есть аккаунты, выведем информацию о первом для анализа
                 if account_count > 0:
                     first_account = response.value[0]
-                    logger.info(f"Размер данных первого аккаунта:   {len(first_account.account.data) if hasattr(first_account.account, 'data') else 'неизвестно'}")
+                    logger.info(f"Размер данных первого аккаунта: {len(first_account.account.data) if hasattr(first_account.account, 'data') else 'неизвестно'}")
             
                 return response.value
 
