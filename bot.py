@@ -730,20 +730,46 @@ class PoolMonitor:
             
         except Exception as e:
             logger.error(f"Критическая ошибка в refresh_pools: {e}")
-            return False 
-       
+            return False
+ 
+    async def test_program_exists(self):
+        """Проверка существования программы"""
+        try:
+            program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
+            
+            # Сначала проверим существование самой программы
+            program_info = await self.solana_client.client.get_account_info(
+                program_pubkey,
+                encoding="base64"
+            )
+            
+            if program_info:
+                logger.info(f"✅ Программа найдена!")
+                logger.info(f"Размер данных программы: {len(program_info.value.data) if program_info.value else 'неизвестно'}")
+                return True
+            else:
+                logger.warning("❌ Программа не найдена!")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Ошибка при проверке программы: {str(e)}")
+            return False
+   
     async def _get_pools_data(self):
         """Получение данных пулов без фильтров для проверки наличия аккаунтов"""
         try:
-            # Создаем программный ключ
+            # Сначала проверяем существование программы
+            if not await self.test_program_exists():
+                logger.error("Программа не существует или недоступна")
+                return []
+
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
 
             logger.info("Пробуем получить все аккаунты программы без фильтров")
-        
-            # Используем encoding как отдельный параметр, а не словарь
+            
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                encoding="base64"  # Только один параметр
+                encoding="base64"
             )
 
             if response and hasattr(response, 'value'):
