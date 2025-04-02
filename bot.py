@@ -754,8 +754,11 @@ class PoolMonitor:
         
             logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
+            # Преобразуем DLMM_PROGRAM_ID в строку перед передачей в get_program_accounts
+            program_id = str(Pubkey.from_string(DLMM_PROGRAM_ID))
+        
             response = await self.solana_client.get_program_accounts(
-                Pubkey.from_string(DLMM_PROGRAM_ID),
+                program_id,  # Передаем как строку вместо объекта Pubkey
                 config
             )
         
