@@ -754,31 +754,27 @@ class PoolMonitor:
             return False
    
     async def _get_pools_data(self):
-        """Получение данных пулов с base64 кодировкой"""
+        """Получение данных пулов через RPC"""
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
         
-            # Добавляем конфигурацию с base64 кодировкой
-            config = {
-                "encoding": "base64"  # Используем base64 как рекомендует RPC
-            }
+            # Используем RpcProgramAccountsConfig как в документации
+            from solana.rpc.types import RpcProgramAccountsConfig
+        
+            config = RpcProgramAccountsConfig(
+                encoding="base64"
+            )
 
-            logger.info("Запрашиваем аккаунты программы с base64 кодировкой")
+            logger.info("Запрашиваем аккаунты программы")
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
                 config
             )
 
-            if response:
-                logger.info(f"Найдено аккаунтов: {len(response) if response else 0}")
-                if response:
-                    # Логируем первый аккаунт для проверки
-                    first = response[0] if response else None
-                    if first:
-                        logger.info(f"Пример данных первого аккаунта: {first}")
-                return response
+            if response and hasattr(response, 'value'):
+                logger.info(f"Получен ответ: {response}")
+                return response.value
 
-            logger.warning("Получен пустой ответ от RPC")
             return []
 
         except Exception as e:
