@@ -215,26 +215,18 @@ class SolanaClient:
             logger.error(f"❌ Ошибка переключения: {e}")
             return False
 
-    async def get_program_accounts(self, program_id: str, config):
-        """Упрощённый запрос с автоматическим переключением"""
-        for attempt in range(3):
-            try:
-                program_pubkey = Pubkey.from_string(program_id)
-            
-                response = await self.client.get_program_accounts(
-                    program_pubkey,
-                    encoding=config.get("encoding"),
-                    filters=config.get("filters")
-                )
-            
-                return response
-            
-            except Exception as e:
-                logger.warning(f"Попытка {attempt+1} не удалась: {str(e)}")
-                if not await self.switch_endpoint():
-                    break
-                await asyncio.sleep(1)
-        return None
+    async def get_program_accounts(self, program_id: str, filters: list):
+        """Унифицированный запрос аккаунтов"""
+        try:
+            return await self.client.get_program_accounts(
+                Pubkey.from_string(program_id),
+                encoding="base64",
+                filters=filters,
+                commitment=Commitment("confirmed")
+            )
+        except Exception as e:
+            logger.error(f"Ошибка get_program_accounts: {e}")
+            return None
 
 # Создаем глобальный экземпляр клиента
 solana_client = SolanaClient()
@@ -697,39 +689,64 @@ class PoolMonitor:
 
     # Добавьте этот метод в класс PoolMonitor
     async def refresh_pools(self):
-        """Основной метод обновления данных пулов"""
+        """Основной метод обновления данных пулов с улучшенной обработкой ошибок"""
         try:
             current_time = datetime.now()
+            logger.debug("Начинаем обновление данных пулов...")
+        
+            # 1. Получаем данные через RPC
             accounts = await self._get_pools_data()
-            
+        
+            # 2. Проверяем и логируем результат запроса
             if not accounts:
-                logger.warning("Получен пустой список пулов")
+                logger.warning("⚠️ Получен пустой список пулов от RPC")
                 return False
-                
+            
+            logger.debug(f"Получено {len(accounts)} сырых записей пулов")
+        
+            # 3. Обработка и кэширование пулов
             new_pools = 0
             updated_pools = 0
-            
+            valid_pools = 0
+
             for account in accounts:
-                pool_address = str(account.pubkey)
+                try:
+                    if not hasattr(account, 'pubkey') or not hasattr(account, 'account'):
+                        logger.debug("Пропущен невалидный аккаунт: отсутствуют обязательные поля")
+                        continue
+                    
+                    pool_address = str(account.pubkey)
                 
-                if pool_address not in self.pools_cache or \
-                   self.pools_cache[pool_address].account.data != account.account.data:
-                    self.pools_cache[pool_address] = account
+                    # Проверяем, изменились ли данные пула
                     if pool_address not in self.pools_cache:
                         new_pools += 1
-                    else:
+                    elif self.pools_cache[pool_address].account.data != account.account.data:
                         updated_pools += 1
+                    else:
+                        continue  # Пул не изменился
+                
+                    # Обновляем кэш
+                    self.pools_cache[pool_address] = account
+                    valid_pools += 1
+                
+                except Exception as e:
+                    logger.warning(f"Ошибка обработки пула {getattr(account, 'pubkey', 'unknown')}: {e}")
+                    continue
 
+            # 4. Фиксируем результаты
             self.last_update = current_time
             logger.info(
-                f"Обновлено пулов: {len(accounts)} | "
+                f"Успешно обработано пулов: {valid_pools}/{(len(accounts)} | "
                 f"Новых: {new_pools} | "
-                f"Измененных: {updated_pools}"
+                f"Обновленных: {updated_pools} | "
+                f"В кэше: {len(self.pools_cache)}"
             )
-            return True
-            
+        
+            return valid_pools > 0  # True если хотя бы один пул обработан
+          
         except Exception as e:
-            logger.error(f"Критическая ошибка в refresh_pools: {e}")
+            logger.error(f"⛔ Критическая ошибка в refresh_pools: {type(e).__name__}: {e}")
+            logger.debug("Трассировка ошибки:", exc_info=True)
             return False
  
     async def test_program_exists(self):
@@ -754,30 +771,31 @@ class PoolMonitor:
             return False
    
     async def _get_pools_data(self):
-        """Получение данных пулов через RPC"""
+        """Получение данных пулов через RPC с правильным форматом запроса"""
         try:
-            program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
-        
-            # Используем str() вместо to_string()
-            params = [
-                str(program_pubkey),  # Конвертируем Pubkey в строку
+            # 1. Подготавливаем фильтры
+            filters = [
                 {
-                    "encoding": "base64",
-                    "commitment": "confirmed"
+                    "memcmp": {
+                        "offset": 0,
+                        "bytes": base58.b58encode(bytes([1])).decode()
+                    }
+                },
+                {
+                    "dataSize": DLMM_CONFIG["pool_size"]
                 }
             ]
 
-            logger.info("Запрашиваем аккаунты программы напрямую через RPC")
-            response = await self.solana_client.client._provider.make_request(
-                "getProgramAccounts", 
-                params
+            # 2. Создаем правильный RPC-запрос
+            response = await self.solana_client.client.get_program_accounts(
+                Pubkey.from_string(DLMM_PROGRAM_ID),
+                encoding="base64",
+                filters=filters,
+                commitment=Commitment("confirmed")
             )
 
-            logger.info(f"Тип ответа: {type(response)}")
-            logger.info(f"Содержимое ответа: {response}")
-
-            if response and "result" in response:
-                return response["result"]
+            if response and hasattr(response, 'value'):
+                return response.value
             return []
 
         except Exception as e:
