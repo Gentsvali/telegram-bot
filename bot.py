@@ -28,7 +28,7 @@ from telegram.ext import (
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Commitment
 from solana.rpc.core import RPCException as SolanaRpcException
-from solana.rpc.types import MemcmpOpts
+from solana.rpc.types import MemcmpOpts, DataSliceOpts 
 from solders.pubkey import Pubkey
 import base58
 import base64
@@ -53,9 +53,9 @@ DEFAULT_FILTERS = {
 # Добавляем недостающие константы
 DLMM_PROGRAM_ID = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
 DLMM_CONFIG = {
-    "pool_size": None,  # Примерный размер данных пула
+    "pool_size": 165,  # Примерный размер данных пула
     "update_interval": 60,  # Интервал обновления в секундах
-    "retry_delay": 5  # Задержка при ошибках
+    "retry_delay": 10  # Задержка при ошибках
 }
 
 # Константы для работы с транзакциями [(2)](https://solana.com/developers/guides/advanced/retry)
@@ -735,39 +735,39 @@ class PoolMonitor:
             return False 
        
     async def _get_pools_data(self):
-        """Получение данных пулов с базовой обработкой ошибок"""
+        """Получение данных пулов с правильной конфигурацией"""
         try:
+            filters = [
+                {
+                    "dataSize": 165  # Размер данных аккаунта
+                },
+                {
+                    "memcmp": MemcmpOpts(
+                        offset=0,  # Смещение в байтах
+                        bytes=base58.b58encode(bytes([1])).decode()  # Конвертируем байты в base58
+                    )
+                }
+            ]
+
             config = {
                 "encoding": "base64",
-                "filters": [
-                    {
-                        "dataSize": 165
-                    },
-                    {
-                        "memcmp": {
-                            "offset": 0,
-                            "bytes": base58.b58encode(bytes([1])).decode()
-                        }
-                    }
-                ]
+                "commitment": Commitment("confirmed"),
+                "filters": filters
             }
-        
+
             logger.debug(f"Отправка запроса с конфигурацией: {config}")
-        
-            # Преобразуем DLMM_PROGRAM_ID в строку перед передачей в get_program_accounts
-            program_id = str(Pubkey.from_string(DLMM_PROGRAM_ID))
-        
+
             response = await self.solana_client.get_program_accounts(
-                program_id,  # Передаем как строку вместо объекта Pubkey
+                DLMM_PROGRAM_ID,
                 config
             )
-        
+
             if response and hasattr(response, 'value'):
                 return response.value
-                
+
             logger.debug("Получен пустой ответ от RPC")
             return []
-        
+
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
             return []
