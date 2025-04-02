@@ -757,10 +757,23 @@ class PoolMonitor:
         """Получение данных пулов через RPC"""
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
+        
+            # Используем DataSliceOpts из solana.rpc.types
+            from solana.rpc.types import DataSliceOpts, MemcmpOpts
+        
+            # Настраиваем конфигурацию как в документации
+            opts = {
+                "encoding": "base64",
+                "dataSlice": DataSliceOpts(
+                    offset=0,
+                    length=100  # Ограничиваем размер возвращаемых данных
+                )
+            }
 
-            # Прямой вызов без конфигурации
+            logger.info("Запрашиваем аккаунты программы с настроенной конфигурацией")
             response = await self.solana_client.client.get_program_accounts(
-                program_pubkey
+                program_pubkey,
+                opts
             )
 
             logger.info(f"Тип ответа: {type(response)}")
@@ -770,7 +783,6 @@ class PoolMonitor:
 
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {str(e)}")
-            # Добавим больше информации об ошибке
             logger.error(f"Тип ошибки: {type(e)}")
             logger.error(f"Repr ошибки: {repr(e)}")
             return []
