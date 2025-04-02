@@ -758,28 +758,28 @@ class PoolMonitor:
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
         
-            # Используем DataSliceOpts из solana.rpc.types
-            from solana.rpc.types import DataSliceOpts, MemcmpOpts
-        
-            # Настраиваем конфигурацию как в документации
-            opts = {
-                "encoding": "base64",
-                "dataSlice": DataSliceOpts(
-                    offset=0,
-                    length=100  # Ограничиваем размер возвращаемых данных
-                )
-            }
+            # Создаем params как в документации RPC
+            params = [
+                program_pubkey.to_string(),
+                {
+                    "encoding": "base64",
+                    "commitment": "confirmed"
+                }
+            ]
 
-            logger.info("Запрашиваем аккаунты программы с настроенной конфигурацией")
-            response = await self.solana_client.client.get_program_accounts(
-                program_pubkey,
-                opts
+            # Прямой RPC вызов
+            logger.info("Запрашиваем аккаунты программы напрямую через RPC")
+            response = await self.solana_client.client._provider.make_request(
+                "getProgramAccounts",
+                params
             )
 
             logger.info(f"Тип ответа: {type(response)}")
             logger.info(f"Содержимое ответа: {response}")
 
-            return response if response else []
+            if response and "result" in response:
+                return response["result"]
+            return []
 
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {str(e)}")
