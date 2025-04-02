@@ -758,12 +758,10 @@ class PoolMonitor:
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
         
-            # Используем RpcProgramAccountsConfig как в документации
-            from solana.rpc.types import RpcProgramAccountsConfig
-        
-            config = RpcProgramAccountsConfig(
-                encoding="base64"
-            )
+            config = {
+                "encoding": "base64",
+                "commitment": "confirmed"
+            }
 
             logger.info("Запрашиваем аккаунты программы")
             response = await self.solana_client.client.get_program_accounts(
@@ -771,12 +769,12 @@ class PoolMonitor:
                 config
             )
 
-            if response and hasattr(response, 'value'):
+            if response:
                 logger.info(f"Получен ответ: {response}")
-                return response.value
+                return response
 
             return []
-
+  
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {str(e)}")
             return []
