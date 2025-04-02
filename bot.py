@@ -740,15 +740,10 @@ class PoolMonitor:
 
             logger.info("Пробуем получить все аккаунты программы без фильтров")
         
-            # Используем только базовые параметры из документации
-            opts = {
-                "encoding": "base64",
-                "commitment": "confirmed"
-            }
-        
+            # Используем encoding как отдельный параметр, а не словарь
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                opts
+                encoding="base64"  # Только один параметр
             )
 
             if response and hasattr(response, 'value'):
