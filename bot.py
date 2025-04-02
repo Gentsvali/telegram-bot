@@ -696,31 +696,75 @@ class PoolMonitor:
         self.solana_client = solana_client
         self.pools_cache = {}
         self.last_update = datetime.now()
-        
-    async def _get_pools_data(self):
+
+    # Добавьте этот метод в класс PoolMonitor
+    async def refresh_pools(self):
+        """Основной метод обновления данных пулов"""
         try:
-            response = await self.solana_client.get_parsed_program_accounts(
-                DLMM_PROGRAM_ID,
-                {
-                    "filters": [
-                        {
-                            "dataSize": 165
-                        },
-                        {
-                            "memcmp": {
-                                "offset": 0,
-                                "bytes": base58.b58encode(bytes([1])).decode()
-                            }
+            current_time = datetime.now()
+            accounts = await self._get_pools_data()
+            
+            if not accounts:
+                logger.warning("Получен пустой список пулов")
+                return False
+                
+            new_pools = 0
+            updated_pools = 0
+            
+            for account in accounts:
+                pool_address = str(account.pubkey)
+                
+                if pool_address not in self.pools_cache or \
+                   self.pools_cache[pool_address].account.data != account.account.data:
+                    self.pools_cache[pool_address] = account
+                    if pool_address not in self.pools_cache:
+                        new_pools += 1
+                    else:
+                        updated_pools += 1
+
+            self.last_update = current_time
+            logger.info(
+                f"Обновлено пулов: {len(accounts)} | "
+                f"Новых: {new_pools} | "
+                f"Измененных: {updated_pools}"
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Критическая ошибка в refresh_pools: {e}")
+            return False 
+       
+    async def _get_pools_data(self):
+        """Получение данных пулов с базовой обработкой ошибок"""
+        try:
+            config = {
+                "encoding": "base64",
+                "filters": [
+                    {
+                        "dataSize": 165
+                    },
+                    {
+                        "memcmp": {
+                            "offset": 0,
+                            "bytes": base58.b58encode(bytes([1])).decode()
                         }
-                    ]
-                }
+                    }
+                ]
+            }
+        
+            logger.debug(f"Отправка запроса с конфигурацией: {config}")
+        
+            response = await self.solana_client.get_program_accounts(
+                Pubkey.from_string(DLMM_PROGRAM_ID),
+                config
             )
         
             if response and hasattr(response, 'value'):
                 return response.value
                 
+            logger.debug("Получен пустой ответ от RPC")
             return []
-            
+        
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
             return []
