@@ -29,7 +29,6 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Commitment
 from solana.rpc.core import RPCException as SolanaRpcException
 from solana.rpc.types import MemcmpOpts, DataSliceOpts 
-from solana.rpc.config import RpcProgramAccountsConfig
 from solders.pubkey import Pubkey
 import base58
 import base64
@@ -758,26 +757,22 @@ class PoolMonitor:
         """Получение данных пулов через RPC"""
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
-        
-            config = {
-                "encoding": "base64",
-                "commitment": "confirmed"
-            }
 
-            logger.info("Запрашиваем аккаунты программы")
+            # Прямой вызов без конфигурации
             response = await self.solana_client.client.get_program_accounts(
-                program_pubkey,
-                config
+                program_pubkey
             )
 
-            if response:
-                logger.info(f"Получен ответ: {response}")
-                return response
+            logger.info(f"Тип ответа: {type(response)}")
+            logger.info(f"Содержимое ответа: {response}")
 
-            return []
-  
+            return response if response else []
+
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {str(e)}")
+            # Добавим больше информации об ошибке
+            logger.error(f"Тип ошибки: {type(e)}")
+            logger.error(f"Repr ошибки: {repr(e)}")
             return []
 
     async def start_monitoring(self, interval=60):
