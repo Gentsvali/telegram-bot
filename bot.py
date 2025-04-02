@@ -40,7 +40,7 @@ from logging.handlers import RotatingFileHandler
 RPC_CONFIG = {
     "MAX_RETRIES": 3,
     "RETRY_DELAY": 1,
-    "DEFAULT_TIMEOUT": 30,
+    "DEFAULT_TIMEOUT": 60,
     "MAX_REQUESTS_PER_10_SEC": 40,  # Максимум запросов за 10 секунд
     "MAX_CONCURRENT_REQUESTS": 40,   # Максимум одновременных подключений
 }
@@ -76,12 +76,12 @@ RPC_ENDPOINTS = [
     {
         'url': 'https://solana-rpc.publicnode.com',
         'priority': 1,
-        'timeout': 10
+        'timeout': 60
     },
     {
         'url': 'https://api.mainnet-beta.solana.com', 
         'priority': 2,
-        'timeout': 15
+        'timeout': 60
     }
 ]
 
@@ -735,31 +735,32 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов без фильтров для проверки наличия аккаунтов"""
         try:
-            # Создаем программный ключ
+            # Увеличиваем таймаут
+            self.solana_client.client.session.timeout = 60.0  # 60 секунд
+        
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
 
             logger.info("Пробуем получить все аккаунты программы без фильтров")
         
+            # Добавляем commitment для улучшения надежности
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                encoding="base64"  # Только encoding без доп. конфигурации
+                encoding="base64",
+                commitment="confirmed"  # Добавляем явный commitment
             )
 
             if response and hasattr(response, 'value'):
                 account_count = len(response.value) if response.value else 0
                 logger.info(f"Найдено аккаунтов: {account_count}")
-            
-                if account_count > 0:
-                    first_account = response.value[0]
-                    logger.info(f"Размер данных первого аккаунта: {len(first_account.account.data) if hasattr(first_account.account, 'data') else 'неизвестно'}")
-            
                 return response.value
 
             logger.warning("Получен пустой ответ от RPC")
             return []
 
         except Exception as e:
-            logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
+            logger.error(f"Ошибка получения данных пулов: {str(e)}")
+            # Если произошел таймаут, пробуем переключиться на другую ноду
+            await self.solana_client.switch_endpoint()
             return []
 
     async def start_monitoring(self, interval=60):
