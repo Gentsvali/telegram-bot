@@ -733,30 +733,43 @@ class PoolMonitor:
             return False
  
     async def test_program_exists(self):
-        """Проверка существования программы"""
+        """Проверка существования программы с подробной информацией"""
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
-            
-            # Сначала проверим существование самой программы
-            program_info = await self.solana_client.client.get_account_info(
+        
+            # Получаем информацию о программе
+            program_info = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                encoding="base64"
+                {
+                    "encoding": "jsonParsed",
+                    "filters": [
+                        {
+                            "dataSize": 165  # размер аккаунта DLMM пула
+                        }
+                    ]
+                }
             )
-            
+        
             if program_info:
                 logger.info(f"✅ Программа найдена!")
-                logger.info(f"Размер данных программы: {len(program_info.value.data) if program_info.value else 'неизвестно'}")
+                logger.info(f"Количество аккаунтов: {len(program_info)}")
+            
+                # Выводим информацию о первом аккаунте для проверки
+                if len(program_info) > 0:
+                    first_account = program_info[0]
+                    logger.info(f"Данные первого аккаунта: {first_account}")
+                    logger.info(f"Размер данных: {len(first_account.account.data) if hasattr(first_account, 'account') else 'неизвестно'}")
                 return True
-            else:
-                logger.warning("❌ Программа не найдена!")
-                return False
+            
+            logger.warning("❌ Программа не найдена или нет аккаунтов")
+            return False
                 
         except Exception as e:
             logger.error(f"Ошибка при проверке программы: {str(e)}")
             return False
    
     async def _get_pools_data(self):
-        """Получение данных пулов без фильтров для проверки наличия аккаунтов"""
+        """Получение данных пулов с расширенными параметрами"""
         try:
             # Сначала проверяем существование программы
             if not await self.test_program_exists():
@@ -765,11 +778,18 @@ class PoolMonitor:
 
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
 
-            logger.info("Пробуем получить все аккаунты программы без фильтров")
-            
+            logger.info("Пробуем получить все аккаунты программы")
+        
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                encoding="base64"
+                {
+                    "encoding": "jsonParsed",
+                    "filters": [
+                        {
+                            "dataSize": 165  # размер аккаунта DLMM пула
+                        }
+                    ]
+                }
             )
 
             if response and hasattr(response, 'value'):
