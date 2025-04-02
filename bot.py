@@ -219,16 +219,14 @@ class SolanaClient:
         """Упрощённый запрос с автоматическим переключением"""
         for attempt in range(3):
             try:
-                logger.debug(f"Отправка запроса к RPC: {self.current_endpoint['url']}")
-                logger.debug(f"ID программы: {program_id}")
-                logger.debug(f"Конфигурация: {config}")
+                program_pubkey = Pubkey.from_string(program_id)
             
                 response = await self.client.get_program_accounts(
-                    Pubkey.from_string(program_id),
-                    config
+                    program_pubkey,
+                    encoding=config.get("encoding"),
+                    filters=config.get("filters")
                 )
             
-                logger.debug(f"Получен ответ: {response}")
                 return response
             
             except Exception as e:
@@ -737,29 +735,32 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с правильной конфигурацией"""
         try:
+            # Создаем правильную конфигурацию согласно документации
             filters = [
+                {"dataSize": DLMM_CONFIG["pool_size"]},  # Используем константу
                 {
-                    "dataSize": 165  # Размер данных аккаунта
-                },
-                {
-                    "memcmp": MemcmpOpts(
-                        offset=0,  # Смещение в байтах
-                        bytes=base58.b58encode(bytes([1])).decode()  # Конвертируем байты в base58
-                    )
+                    "memcmp": {
+                        "offset": 0,
+                        "bytes": base58.b58encode(bytes([1])).decode()
+                    }
                 }
             ]
 
             config = {
                 "encoding": "base64",
-                "commitment": Commitment("confirmed"),
                 "filters": filters
             }
 
             logger.debug(f"Отправка запроса с конфигурацией: {config}")
 
-            response = await self.solana_client.get_program_accounts(
-                DLMM_PROGRAM_ID,
-                config
+            # Создаем Pubkey из строки
+            program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
+        
+            # Отправляем запрос
+            response = await self.solana_client.client.get_program_accounts(
+                program_pubkey,
+                encoding="base64",
+                filters=filters  # Передаем фильтры отдельно
             )
 
             if response and hasattr(response, 'value'):
