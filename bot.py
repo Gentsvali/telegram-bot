@@ -736,7 +736,7 @@ class PoolMonitor:
             # 4. Фиксируем результаты
             self.last_update = current_time
             logger.info(
-                f"Успешно обработано пулов: {valid_pools}/{(len(accounts)} | "
+                f"Успешно обработано пулов: {valid_pools}/{len(accounts)} | "
                 f"Новых: {new_pools} | "
                 f"Обновленных: {updated_pools} | "
                 f"В кэше: {len(self.pools_cache)}"
