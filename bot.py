@@ -758,19 +758,18 @@ class PoolMonitor:
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
         
-            # Создаем params как в документации RPC
+            # Используем str() вместо to_string()
             params = [
-                program_pubkey.to_string(),
+                str(program_pubkey),  # Конвертируем Pubkey в строку
                 {
                     "encoding": "base64",
                     "commitment": "confirmed"
                 }
             ]
 
-            # Прямой RPC вызов
             logger.info("Запрашиваем аккаунты программы напрямую через RPC")
             response = await self.solana_client.client._provider.make_request(
-                "getProgramAccounts",
+                "getProgramAccounts", 
                 params
             )
 
