@@ -733,29 +733,35 @@ class PoolMonitor:
             return False 
        
     async def _get_pools_data(self):
-        """Получение данных пулов с правильной конфигурацией"""
+        """Получение данных пулов без фильтров для проверки наличия аккаунтов"""
         try:
-            # Создаем объект MemcmpOpts для фильтрации
-            memcmp = MemcmpOpts(
-                offset=0,
-                bytes=base58.b58encode(bytes([1])).decode()
-            )
-
             # Создаем программный ключ
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
 
-            # Отправляем запрос с правильной структурой
+            # Делаем самый простой запрос без фильтров
+            config = {
+                "encoding": "base64"
+            }
+
+            logger.info("Пробуем получить все аккаунты программы без фильтров")
+        
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                encoding="base64",
-                data_size=165,
-                memcmp_opts=[memcmp]  # Используем memcmp_opts вместо filters
+                config
             )
 
             if response and hasattr(response, 'value'):
+                account_count = len(response.value) if response.value else 0
+                logger.info(f"Найдено аккаунтов: {account_count}")
+            
+                # Если есть аккаунты, выведем информацию о первом для анализа
+                if account_count > 0:
+                    first_account = response.value[0]
+                    logger.info(f"Размер данных первого аккаунта:   {len(first_account.account.data) if hasattr(first_account.account, 'data') else 'неизвестно'}")
+            
                 return response.value
 
-            logger.debug("Получен пустой ответ от RPC")
+            logger.warning("Получен пустой ответ от RPC")
             return []
 
         except Exception as e:
