@@ -29,6 +29,7 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Commitment
 from solana.rpc.core import RPCException as SolanaRpcException
 from solana.rpc.types import MemcmpOpts, DataSliceOpts 
+from solana.rpc.config import RpcProgramAccountsConfig
 from solders.pubkey import Pubkey
 import base58
 import base64
