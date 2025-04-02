@@ -733,32 +733,20 @@ class PoolMonitor:
             return False
  
     async def test_program_exists(self):
-        """Проверка существования программы"""
+        """Базовая проверка программы"""
         try:
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
         
-            # Используем правильную структуру запроса согласно документации
-            config = {
-                "encoding": "base64",  # используем base64 вместо jsonParsed
-                "filters": [
-                    {
-                        "dataSize": 165
-                    }
-                ]
-            }
-        
-            program_info = await self.solana_client.client.get_program_accounts(
-                program_pubkey,
-                config
+            # Самый простой вызов без дополнительных параметров
+            program_info = await self.solana_client.client.get_account_info(
+                program_pubkey
             )
         
             if program_info:
                 logger.info(f"✅ Программа найдена!")
-                logger.info(f"Тип ответа: {type(program_info)}")
-                logger.info(f"Содержимое ответа: {program_info}")
+                logger.info(f"Ответ: {program_info}")
                 return True
             
-            logger.warning("❌ Программа не найдена или нет аккаунтов")
             return False
                 
         except Exception as e:
@@ -766,40 +754,24 @@ class PoolMonitor:
             return False
    
     async def _get_pools_data(self):
-        """Получение данных пулов"""
+        """Базовое получение данных пулов"""
         try:
-            if not await self.test_program_exists():
-                logger.error("Программа не существует или недоступна")
-                return []
-
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
-        
-            config = {
-                "encoding": "base64",
-                "filters": [
-                    {
-                        "dataSize": 165
-                    }
-                ]
-            }
 
-            logger.info("Пробуем получить все аккаунты программы")
+            # Самый простой вызов без фильтров
             response = await self.solana_client.client.get_program_accounts(
-                program_pubkey,
-                config
+                program_pubkey
             )
 
             if response:
-                account_count = len(response) if response else 0
-                logger.info(f"Найдено аккаунтов: {account_count}")
+                logger.info(f"Найдено аккаунтов: {len(response) if response else 0}")
+                logger.info(f"Ответ: {response}")
                 return response
 
-            logger.warning("Получен пустой ответ от RPC")
             return []
 
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {str(e)}")
-            await self.solana_client.switch_endpoint()
             return []
 
     async def start_monitoring(self, interval=60):
