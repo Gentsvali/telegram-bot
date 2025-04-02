@@ -735,26 +735,20 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов с правильной конфигурацией"""
         try:
-            # Создаем memcmp фильтр используя MemcmpOpts
-            memcmp_filter = MemcmpOpts(
-                offset=0,
-                bytes=base58.b58encode(bytes([1])).decode()
-            )
-
-            # Создаем массив фильтров
+            # Создаем фильтры как объекты Memcmp, а не словари
             filters = [
-                {"dataSize": 165},
-                {"memcmp": memcmp_filter}
+                Memcmp(offset=0, bytes_=base58.b58encode(bytes([1])).decode())
             ]
 
             # Создаем программный ключ
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
 
-            # Отправляем запрос напрямую через клиент
+            # Отправляем запрос с правильной структурой
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
                 encoding="base64",
-                filters=filters
+                data_size=165,  # Используем data_size вместо dataSize в фильтрах
+                filters=filters  # Передаем список объектов Memcmp
             )
 
             if response and hasattr(response, 'value'):
