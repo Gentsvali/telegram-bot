@@ -735,18 +735,20 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Получение данных пулов без фильтров для проверки наличия аккаунтов"""
         try:
-            # Увеличиваем таймаут
-            self.solana_client.client.session.timeout = 60.0  # 60 секунд
-        
+            # Создаем программный ключ
             program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
 
             logger.info("Пробуем получить все аккаунты программы без фильтров")
         
-            # Добавляем commitment для улучшения надежности
+            # Используем только базовые параметры из документации
+            opts = {
+                "encoding": "base64",
+                "commitment": "confirmed"
+            }
+        
             response = await self.solana_client.client.get_program_accounts(
                 program_pubkey,
-                encoding="base64",
-                commitment="confirmed"  # Добавляем явный commitment
+                opts
             )
 
             if response and hasattr(response, 'value'):
@@ -759,7 +761,6 @@ class PoolMonitor:
 
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {str(e)}")
-            # Если произошел таймаут, пробуем переключиться на другую ноду
             await self.solana_client.switch_endpoint()
             return []
 
