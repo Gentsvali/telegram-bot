@@ -769,33 +769,25 @@ class WebhookServer:
     def setup_routes(self):        
         @self.app.before_serving
         async def startup():
-            if self.initialized:  # Проверяем, была ли уже инициализация
+            if self.initialized:
                 return
-                
             try:
-                # Инициализируем Solana клиент
+                # Инициализация Solana
                 if not await solana_client.initialize():
                     logger.error("Не удалось инициализировать Solana клиент")
                     raise Exception("Ошибка инициализации Solana клиента")
 
-                # Инициализируем Telegram приложение
-                await application.initialize()
-        
-                # Инициализируем мониторинг
-                if not await init_monitoring():
-                    raise Exception("Ошибка инициализации мониторинга")
-        
-                # Устанавливаем webhook
-                await application.bot.set_webhook(
-                    f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
-                    allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True
-                )
+                # Запуск мониторинга пулов как фоновой задачи
+                self.app.add_background_task(pool_monitor.start_monitoring)
 
-                self.initialized = True  # Отмечаем что инициализация прошла
-                logger.info("🚀 Сервер успешно запущен")
+                # Инициализация Telegram
+                await application.initialize()
+                await application.start()
+                await application.bot.set_webhook(...)
+
+                self.initialized = True
             except Exception as e:
-                logger.error(f"Критическая ошибка при запуске: {e}")
+                logger.critical(f"Ошибка запуска: {e}")
                 sys.exit(1)
 
         @self.app.after_serving
@@ -910,16 +902,5 @@ webhook_server = WebhookServer(application, pool_monitor, filter_manager)
 app = webhook_server.app
 
 if __name__ == "__main__":
-    try:
-        # Создаем единственный экземпляр сервера
-        webhook_server = WebhookServer(application, pool_monitor, filter_manager)
-        
-        # Настройка обработки сигналов
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, lambda s, f: asyncio.get_event_loop().stop())
-
-        # Запуск сервера
-        asyncio.run(webhook_server.app.run_task(host='0.0.0.0', port=PORT))
-    except Exception as e:
-        logger.critical(f"Критическая ошибка: {e}")
-        sys.exit(1)
+    webhook_server = WebhookServer(...)
+    webhook_server.app.run(host='0.0.0.0', port=PORT)
