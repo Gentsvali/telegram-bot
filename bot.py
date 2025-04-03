@@ -682,112 +682,84 @@ class PoolMonitor:
         self.processing = False
         self.rpc_errors = 0
         self.max_rpc_errors = 5
-        self._monitoring_task = None
-        self._should_stop = False
 
     async def _get_pools_data(self):
-        """Универсальный метод получения данных пулов"""
+        """Получение данных пулов для solana-py >= 0.29"""
         try:
-            # Определяем правильный формат для текущей версии solana-py
-            try:
-                # Для новых версий solana-py (>=0.29)
-                from solana.rpc.types import MemcmpOpts, DataSliceOpts
-                filters = [
-                    MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode()),
-                    DataSliceOpts(offset=0, length=165)
-                ]
-                response = await self.solana_client.client.get_program_accounts(
-                    Pubkey.from_string(DLMM_PROGRAM_ID),
-                    encoding="base64",
-                    filters=filters,
-                    commitment=Commitment("confirmed")
-                )
-            except (ImportError, AttributeError):
-                # Для старых версий solana-py (<0.29)
-                response = await self.solana_client.client.get_program_accounts(
-                    Pubkey.from_string(DLMM_PROGRAM_ID),
-                    encoding="base64",
-                    memcmp_opts=[
-                        MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode())
-                    ],
-                    data_size=165,
-                    commitment=Commitment("confirmed")
-                )
-
+            filters = [
+                MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode()),
+                DataSliceOpts(offset=0, length=165)
+            ]
+            
+            response = await self.solana_client.client.get_program_accounts(
+                Pubkey.from_string(DLMM_PROGRAM_ID),
+                encoding="base64",
+                filters=filters,
+                commitment=Commitment("confirmed")
+            )
+            
             self.rpc_errors = 0
-            return response.value if response and hasattr(response, 'value') else None
-
+            return response.value if response else None
+            
         except Exception as e:
             self.rpc_errors += 1
             logger.error(f"RPC Error #{self.rpc_errors}: {str(e)}", exc_info=True)
-        
-            # Попробуем базовый запрос без фильтров, если продолжаются ошибки
-            if self.rpc_errors > 2:
-                try:
-                    response = await self.solana_client.client.get_program_accounts(
-                        Pubkey.from_string(DLMM_PROGRAM_ID),
-                        encoding="base64",
-                        commitment=Commitment("confirmed")
-                    )
-                    return response.value if response and hasattr(response, 'value') else None
-                except Exception as fallback_e:
-                    logger.error(f"Fallback RPC Error: {str(fallback_e)}")
-        
             return None
 
     async def refresh_pools(self):
-        """Обновление данных пулов с улучшенной обработкой ошибок"""
+        """Обновление данных пулов"""
         try:
             if self.rpc_errors >= self.max_rpc_errors:
                 logger.warning("Превышено максимальное количество ошибок RPC")
                 if hasattr(self.solana_client, 'switch_endpoint'):
                     await self.solana_client.switch_endpoint()
-                    self.rpc_errors = 0  # Сброс счетчика после переключения
+                    self.rpc_errors = 0
                 return False
 
             self.processing = True
             logger.debug("Начало обновления данных пулов...")
-        
-            accounts = await self._get_pools_data()
-        
-            if not accounts:
-                logger.warning("Не удалось получить данные пулов")
-                return False
             
-            # Обработка полученных данных
-            processed = 0
+            accounts = await self._get_pools_data()
+            
+            if not accounts:
+                logger.warning("Не получены данные пулов")
+                return False
+                
+            new_pools = updated_pools = 0
             for account in accounts:
                 try:
                     pool_id = str(account.pubkey)
+                    if pool_id not in self.pools_cache:
+                        new_pools += 1
+                    elif self.pools_cache[pool_id].account.data != account.account.data:
+                        updated_pools += 1
                     self.pools_cache[pool_id] = account
-                    processed += 1
                 except Exception as e:
                     logger.warning(f"Ошибка обработки пула: {str(e)}")
                     continue
 
             self.last_update = datetime.now()
-            logger.info(f"Успешно обработано {processed}/{len(accounts)} пулов")
-            return processed > 0
-        
+            logger.info(
+                f"Обновлено пулов: новых {new_pools}, измененных {updated_pools}, "
+                f"всего {len(self.pools_cache)}"
+            )
+            return True
+            
         except Exception as e:
-            logger.error(f"Критическая ошибка обновления: {str(e)}", exc_info=True)
+            logger.error(f"Ошибка обновления: {str(e)}")
             return False
         finally:
             self.processing = False
 
     async def start_monitoring(self, interval=60):
-        """Запуск мониторинга с автоматическим восстановлением"""
-        self._should_stop = False
-        self._monitoring_task = asyncio.create_task(self._monitoring_loop(interval))
+        """Запуск мониторинга"""
+        while True:
+            success = await self.refresh_pools()
+            await asyncio.sleep(interval if success else 5)
 
     async def stop_monitoring(self):
-        """Корректная остановка мониторинга"""
-        if hasattr(self, '_monitoring_task') and self._monitoring_task:
-            self._monitoring_task.cancel()
-            try:
-                await self._monitoring_task
-            except asyncio.CancelledError:
-                pass
+        """Остановка мониторинга"""
+        self.processing = False
         logger.info("Мониторинг пулов остановлен")
 
     async def _monitoring_loop(self, interval):
