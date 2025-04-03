@@ -763,11 +763,15 @@ class WebhookServer:
         self.telegram_app = application
         self.pool_monitor = pool_monitor
         self.filter_manager = filter_manager
+        self.initialized = False  # Флаг инициализации
         self.setup_routes()
 
     def setup_routes(self):        
         @self.app.before_serving
         async def startup():
+            if self.initialized:  # Проверяем, была ли уже инициализация
+                return
+                
             try:
                 # Инициализируем Solana клиент
                 if not await solana_client.initialize():
@@ -785,9 +789,10 @@ class WebhookServer:
                 await application.bot.set_webhook(
                     f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
                     allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True  # рекомендуется добавить
+                    drop_pending_updates=True
                 )
 
+                self.initialized = True  # Отмечаем что инициализация прошла
                 logger.info("🚀 Сервер успешно запущен")
             except Exception as e:
                 logger.error(f"Критическая ошибка при запуске: {e}")
@@ -906,12 +911,15 @@ app = webhook_server.app
 
 if __name__ == "__main__":
     try:
+        # Создаем единственный экземпляр сервера
+        webhook_server = WebhookServer(application, pool_monitor, filter_manager)
+        
         # Настройка обработки сигналов
         for sig in (signal.SIGTERM, signal.SIGINT):
             signal.signal(sig, lambda s, f: asyncio.get_event_loop().stop())
 
         # Запуск сервера
-        asyncio.run(webhook_server.run())
+        asyncio.run(webhook_server.app.run_task(host='0.0.0.0', port=PORT))
     except Exception as e:
         logger.critical(f"Критическая ошибка: {e}")
         sys.exit(1)
