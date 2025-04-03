@@ -783,7 +783,11 @@ class WebhookServer:
                 # Инициализация Telegram
                 await application.initialize()
                 await application.start()
-                await application.bot.set_webhook(...)
+                await application.bot.set_webhook(
+    f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}",
+    allowed_updates=Update.ALL_TYPES,
+    drop_pending_updates=True
+)
 
                 self.initialized = True
             except Exception as e:
