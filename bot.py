@@ -686,32 +686,23 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Универсальный метод получения данных пулов"""
         try:
-            # Пробуем разные варианты в зависимости от доступного API
-            try:
-                # Вариант 1: Для новых версий solana-py (0.29+)
-                from solana.rpc.types import MemcmpOpts
-                filters = [
-                    MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode())
-                ]
-                response = await self.solana_client.client.get_program_accounts(
-                    Pubkey.from_string(DLMM_PROGRAM_ID),
-                    encoding="base64",
-                    filters=filters,
-                    data_size=165,
-                    commitment=Commitment("confirmed")
+            from solana.rpc.types import MemcmpOpts
+        
+            # Создаем правильные фильтры
+            filters = [
+                MemcmpOpts(
+                    offset=0,
+                    bytes=base58.b58encode(bytes([1])).decode()
                 )
-            except (ImportError, AttributeError):
-                # Вариант 2: Для старых версий
-                response = await self.solana_client.client.get_program_accounts(
-                    Pubkey.from_string(DLMM_PROGRAM_ID),
-                    encoding="base64",
-                    memcmp_opts={
-                        "offset": 0,
-                        "bytes": base58.b58encode(bytes([1])).decode()
-                    },
-                    data_size=165,
-                    commitment=Commitment("confirmed")
-                )
+            ]
+        
+            # Делаем запрос с правильными параметрами
+            response = await self.solana_client.client.get_program_accounts(
+                Pubkey.from_string(DLMM_PROGRAM_ID),
+                encoding="base64",
+                filters=filters,
+                commitment=Commitment("confirmed")
+            )
 
             self.rpc_errors = 0
             return response.value if response else None
@@ -719,8 +710,8 @@ class PoolMonitor:
         except Exception as e:
             self.rpc_errors += 1
             logger.error(f"RPC Error #{self.rpc_errors}: {str(e)}")
-            
-            # Аварийный вариант: без фильтров
+        
+            # Аварийный вариант без фильтров
             if self.rpc_errors > 2:
                 try:
                     response = await self.solana_client.client.get_program_accounts(
@@ -731,7 +722,7 @@ class PoolMonitor:
                     return response.value if response else None
                 except Exception as fallback_e:
                     logger.error(f"Fallback RPC Error: {str(fallback_e)}")
-            
+        
             return None
 
     async def refresh_pools(self):
