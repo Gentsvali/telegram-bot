@@ -682,12 +682,18 @@ class PoolMonitor:
         self.processing = False
 
     async def _get_pools_data(self):
-        """Получение данных пулов через RPC с правильными фильтрами"""
+        """Получение данных DLMM пулов"""
         try:
-            # Правильные фильтры для Solana RPC
             filters = [
-                MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode()),
-                DataSliceOpts(offset=0, length=165)  # Указываем размер данных
+                {
+                    "memcmp": {
+                        "offset": 0,
+                        "bytes": base58.b58encode(bytes([1])).decode('utf-8')
+                    }
+                },
+                {
+                    "dataSize": 165  # Размер данных аккаунта пула
+                }
             ]
             
             response = await self.solana_client.client.get_program_accounts(
@@ -699,62 +705,51 @@ class PoolMonitor:
             return response.value if response else None
             
         except Exception as e:
-            logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
+            logger.error(f"RPC Error: {str(e)}", exc_info=True)
             return None
 
     async def refresh_pools(self):
-        """Обновление данных пулов с улучшенной обработкой ошибок"""
+        """Обновление данных пулов"""
         try:
             self.processing = True
-            logger.debug("Начинаем обновление данных пулов...")
-        
+            logger.debug("Starting pools update...")
+            
             accounts = await self._get_pools_data()
-        
+            
             if not accounts:
-                logger.warning("⚠️ Не удалось получить данные пулов")
+                logger.warning("No pool data received")
                 return False
-            
-            logger.debug(f"Получено {len(accounts)} записей пулов")
-            
-            # Обработка пулов
-            new_pools = updated_pools = 0
-            for account in accounts:
-                try:
-                    pool_address = str(account.pubkey)
-                    
-                    if pool_address not in self.pools_cache:
-                        new_pools += 1
-                    elif self.pools_cache[pool_address].account.data != account.account.data:
-                        updated_pools += 1
-                    
-                    self.pools_cache[pool_address] = account
                 
-                except Exception as e:
-                    logger.warning(f"Ошибка обработки пула {pool_address}: {e}")
-                    continue
-
+            # Обработка полученных данных
+            new_count = updated_count = 0
+            for account in accounts:
+                pool_address = str(account.pubkey)
+                
+                if pool_address not in self.pools_cache:
+                    new_count += 1
+                elif self.pools_cache[pool_address].account.data != account.account.data:
+                    updated_count += 1
+                    
+                self.pools_cache[pool_address] = account
+                
             self.last_update = datetime.now()
             logger.info(
-                f"Обновлено пулов: новых {new_pools}, измененных {updated_pools} | "
-                f"Всего в кэше: {len(self.pools_cache)}"
+                f"Pools updated - New: {new_count}, Updated: {updated_count}, "
+                f"Total: {len(self.pools_cache)}"
             )
             return True
-          
+            
         except Exception as e:
-            logger.error(f"Критическая ошибка обновления: {e}", exc_info=True)
+            logger.error(f"Update error: {str(e)}", exc_info=True)
             return False
         finally:
             self.processing = False
 
     async def start_monitoring(self, interval=60):
-        """Запуск мониторинга с автоматическим восстановлением"""
+        """Запуск мониторинга"""
         while True:
-            try:
-                success = await self.refresh_pools()
-                await asyncio.sleep(interval if success else 5)
-            except Exception as e:
-                logger.critical(f"Остановка мониторинга из-за ошибки: {e}")
-                await asyncio.sleep(30)  # Долгая пауза перед перезапуском
+            success = await self.refresh_pools()
+            await asyncio.sleep(interval if success else 5)
 
 pool_monitor = PoolMonitor(solana_client)
 
