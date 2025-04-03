@@ -212,14 +212,18 @@ class HeliusClient:
             logger.error(f"❌ Ошибка переключения: {e}")
             return False
 
-    async def get_program_accounts(self, program_id: str, filters: list):
+    async def get_program_accounts(self, program_id: str, filters: list = None):
         """Унифицированный запрос аккаунтов"""
         try:
-            return await self.client.get_program_accounts(
-                Pubkey.from_string(program_id),
-                encoding="base64",
-                filters=filters,
-                commitment=Commitment("confirmed")
+            params = {
+                "encoding": "jsonParsed"
+            }
+            if filters:
+                params["filters"] = filters
+                
+            return await self.client.send(
+                "getProgramAccounts",
+                [program_id, params]
             )
         except Exception as e:
             logger.error(f"Ошибка get_program_accounts: {e}")
@@ -686,24 +690,28 @@ class PoolMonitor:
     async def _get_pools_data(self):
         """Универсальный метод получения данных пулов"""
         try:
-            from solana.rpc.types import MemcmpOpts
-        
-            # Создаем правильные фильтры
-            filters = [
-                MemcmpOpts(
-                    offset=0,
-                    bytes=base58.b58encode(bytes([1])).decode()
-                )
-            ]
-        
-            # Делаем запрос с правильными параметрами
-            response = await self.solana_client.client.get_program_accounts(
-                Pubkey.from_string(DLMM_PROGRAM_ID),
-                encoding="base64",
-                filters=filters,
-                commitment=Commitment("confirmed")
+            # Создаем правильный запрос как в примере
+            response = await self.solana_client.client.send(
+                "getProgramAccounts",
+                [
+                    DLMM_PROGRAM_ID,
+                    {
+                        "encoding": "jsonParsed",
+                        "filters": [
+                            {
+                                "dataSize": 165
+                            },
+                            {
+                                "memcmp": {
+                                    "offset": 0,
+                                    "bytes": base58.b58encode(bytes([1])).decode()
+                                }
+                            }
+                        ]
+                    }
+                ]
             )
-
+        
             self.rpc_errors = 0
             return response.value if response else None
 
@@ -712,18 +720,20 @@ class PoolMonitor:
             logger.error(f"RPC Error #{self.rpc_errors}: {str(e)}")
         
             # Аварийный вариант без фильтров
-            if self.rpc_errors > 2:
-                try:
-                    response = await self.solana_client.client.get_program_accounts(
-                        Pubkey.from_string(DLMM_PROGRAM_ID),
-                        encoding="base64",
-                        commitment=Commitment("confirmed")
-                    )
-                    return response.value if response else None
-                except Exception as fallback_e:
-                    logger.error(f"Fallback RPC Error: {str(fallback_e)}")
-        
-            return None
+            try:
+                response = await self.solana_client.client.send(
+                    "getProgramAccounts",
+                    [
+                        DLMM_PROGRAM_ID,
+                        {
+                            "encoding": "jsonParsed"
+                        }
+                    ]
+                )
+                return response.value if response else None
+            except Exception as fallback_e:
+                logger.error(f"Fallback RPC Error: {str(fallback_e)}")
+                return None
 
     async def refresh_pools(self):
         """Обновление данных пулов с улучшенной обработкой ошибок"""
