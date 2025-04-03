@@ -688,52 +688,24 @@ class PoolMonitor:
         self.max_rpc_errors = 5
 
     async def _get_pools_data(self):
-        """Универсальный метод получения данных пулов"""
+        """Получение данных пулов через RPC"""
         try:
-            # Создаем правильный запрос как в примере
-            response = await self.solana_client.client.send(
-                "getProgramAccounts",
-                [
-                    DLMM_PROGRAM_ID,
-                    {
-                        "encoding": "jsonParsed",
-                        "filters": [
-                            {
-                                "dataSize": 165
-                            },
-                            {
-                                "memcmp": {
-                                    "offset": 0,
-                                    "bytes": base58.b58encode(bytes([1])).decode()
-                                }
-                            }
-                        ]
-                    }
-                ]
+            # Создаем базовый запрос без фильтров
+            response = await self.solana_client.client.get_program_accounts(
+                Pubkey.from_string(DLMM_PROGRAM_ID),
+                encoding="base64",  # используем base64 кодировку как указано в документации
+                commitment=Commitment("confirmed")
             )
         
-            self.rpc_errors = 0
-            return response.value if response else None
+            logger.debug(f"Получен ответ: {response}")
+        
+            if response and hasattr(response, 'value'):
+                return response.value
+            return None
 
         except Exception as e:
-            self.rpc_errors += 1
-            logger.error(f"RPC Error #{self.rpc_errors}: {str(e)}")
-        
-            # Аварийный вариант без фильтров
-            try:
-                response = await self.solana_client.client.send(
-                    "getProgramAccounts",
-                    [
-                        DLMM_PROGRAM_ID,
-                        {
-                            "encoding": "jsonParsed"
-                        }
-                    ]
-                )
-                return response.value if response else None
-            except Exception as fallback_e:
-                logger.error(f"Fallback RPC Error: {str(fallback_e)}")
-                return None
+            logger.error(f"Ошибка получения данных пулов: {str(e)}")
+            return None
 
     async def refresh_pools(self):
         """Обновление данных пулов с улучшенной обработкой ошибок"""
