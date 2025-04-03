@@ -676,21 +676,18 @@ setup_bot_handlers(application, filter_manager)
 
 class PoolMonitor:
     def __init__(self, solana_client):
-        """
-        Упрощенный монитор пулов
-        :param solana_client: экземпляр HeliusClient
-        """
         self.solana_client = solana_client
         self.pools_cache = {}
         self.last_update = datetime.now()
-        self.processing = False  # Добавляем флаг обработки
+        self.processing = False
 
     async def _get_pools_data(self):
-        """Получение данных пулов через RPC"""
+        """Получение данных пулов через RPC с правильными фильтрами"""
         try:
+            # Правильные фильтры для Solana RPC
             filters = [
-                {"memcmp": {"offset": 0, "bytes": base58.b58encode(bytes([1])).decode()}},
-                {"dataSize": 165}
+                MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode()),
+                DataSliceOpts(offset=0, length=165)  # Указываем размер данных
             ]
             
             response = await self.solana_client.client.get_program_accounts(
@@ -702,82 +699,62 @@ class PoolMonitor:
             return response.value if response else None
             
         except Exception as e:
-            logger.error(f"Ошибка получения данных пулов: {e}")
+            logger.error(f"Ошибка получения данных пулов: {e}", exc_info=True)
             return None
 
     async def refresh_pools(self):
-        """Основной метод обновления данных пулов"""
+        """Обновление данных пулов с улучшенной обработкой ошибок"""
         try:
             self.processing = True
-            current_time = datetime.now()
             logger.debug("Начинаем обновление данных пулов...")
         
             accounts = await self._get_pools_data()
         
             if not accounts:
-                logger.warning("⚠️ Получен пустой список пулов от RPC")
+                logger.warning("⚠️ Не удалось получить данные пулов")
                 return False
             
             logger.debug(f"Получено {len(accounts)} записей пулов")
-        
-            new_pools = updated_pools = valid_pools = 0
-
+            
+            # Обработка пулов
+            new_pools = updated_pools = 0
             for account in accounts:
                 try:
-                    if not hasattr(account, 'pubkey') or not hasattr(account, 'account'):
-                        continue
-                    
                     pool_address = str(account.pubkey)
-                
+                    
                     if pool_address not in self.pools_cache:
                         new_pools += 1
                     elif self.pools_cache[pool_address].account.data != account.account.data:
                         updated_pools += 1
-                    else:
-                        continue
-                
+                    
                     self.pools_cache[pool_address] = account
-                    valid_pools += 1
                 
                 except Exception as e:
-                    logger.warning(f"Ошибка обработки пула: {e}")
+                    logger.warning(f"Ошибка обработки пула {pool_address}: {e}")
                     continue
 
-            self.last_update = current_time
+            self.last_update = datetime.now()
             logger.info(
-                f"Успешно обработано пулов: {valid_pools}/{len(accounts)} | "
-                f"Новых: {new_pools} | Обновленных: {updated_pools}"
+                f"Обновлено пулов: новых {new_pools}, измененных {updated_pools} | "
+                f"Всего в кэше: {len(self.pools_cache)}"
             )
-            return valid_pools > 0
+            return True
           
         except Exception as e:
-            logger.error(f"Критическая ошибка: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"Критическая ошибка обновления: {e}", exc_info=True)
             return False
         finally:
             self.processing = False
- 
-    async def test_program_exists(self):
-        """Проверка доступности программы"""
-        try:
-            program_pubkey = Pubkey.from_string(DLMM_PROGRAM_ID)
-            program_info = await self.solana_client.client.get_account_info(program_pubkey)
-            return bool(program_info)
-        except Exception as e:
-            logger.error(f"Ошибка проверки программы: {e}")
-            return False
-
-    def get_pool_stats(self) -> Dict:
-        """Статистика по пулам"""
-        return {
-            "total": len(self.pools_cache),
-            "last_update": self.last_update.isoformat()
-        }
 
     async def start_monitoring(self, interval=60):
-        """Запуск периодического мониторинга"""
+        """Запуск мониторинга с автоматическим восстановлением"""
         while True:
-            success = await self.refresh_pools()
-            await asyncio.sleep(interval if success else 5)
+            try:
+                success = await self.refresh_pools()
+                await asyncio.sleep(interval if success else 5)
+            except Exception as e:
+                logger.critical(f"Остановка мониторинга из-за ошибки: {e}")
+                await asyncio.sleep(30)  # Долгая пауза перед перезапуском
 
 pool_monitor = PoolMonitor(solana_client)
 
