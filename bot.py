@@ -74,17 +74,11 @@ COMPUTE_BUDGET = {
 # Обновленные RPC эндпоинты с приоритетами
 RPC_ENDPOINTS = [
     {
-        'url': 'https://solana-rpc.publicnode.com',
+        'url': f'https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}',
         'priority': 1,
-        'timeout': 60
-    },
-    {
-        'url': 'https://api.mainnet-beta.solana.com', 
-        'priority': 2,
-        'timeout': 60
+        'timeout': 30
     }
 ]
-
 # Настройка логгера
 def setup_logger():
     logger = logging.getLogger(__name__)
@@ -143,6 +137,7 @@ FILE_PATH = "filters.json"
 USER_ID = int(os.getenv("USER_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", 10000))
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 application = (
     ApplicationBuilder()
     .token(TELEGRAM_TOKEN)
@@ -170,10 +165,10 @@ async def init_monitoring():
         logger.error(f"Ошибка инициализации мониторинга: {e}")
         return False
 
-class SolanaClient:
+class HeliusClient:
     def __init__(self):
-        self.current_endpoint = RPC_ENDPOINTS[0]
-        self.client = None
+        self.rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        self.client = AsyncClient(self.rpc_url, timeout=30)
 
     async def initialize(self):
         """Инициализация с автоматическим выбором рабочего RPC"""
@@ -770,39 +765,44 @@ class PoolMonitor:
             logger.error(f"Ошибка при проверке программы: {str(e)}")
             return False
    
-    async def _get_pools_data(self):
-        """Получение данных пулов через RPC с правильным форматом запроса"""
+    async def get_dlmm_pools(self) -> Optional[List[Dict]]:
+        """Получает все DLMM пулы через Helius RPC"""
         try:
-            # 1. Подготавливаем фильтры
             filters = [
-                {
-                    "memcmp": {
-                        "offset": 0,
-                        "bytes": base58.b58encode(bytes([1])).decode()
-                    }
-                },
-                {
-                    "dataSize": DLMM_CONFIG["pool_size"]
-                }
+                {"memcmp": {"offset": 0, "bytes": base58.b58encode(bytes([1])).decode()}},
+                {"dataSize": 165}
             ]
-
-            # 2. Создаем правильный RPC-запрос
-            response = await self.solana_client.client.get_program_accounts(
+            
+            response = await self.client.get_program_accounts(
                 Pubkey.from_string(DLMM_PROGRAM_ID),
                 encoding="base64",
                 filters=filters,
                 commitment=Commitment("confirmed")
             )
-
-            if response and hasattr(response, 'value'):
-                return response.value
-            return []
+            
+            pools = []
+            for account in response.value:
+                pool_data = self._decode_pool_data(account.account.data)
+                if pool_data:
+                    pools.append(pool_data)
+            return pools
 
         except Exception as e:
-            logger.error(f"Ошибка получения данных пулов: {str(e)}")
-            logger.error(f"Тип ошибки: {type(e)}")
-            logger.error(f"Repr ошибки: {repr(e)}")
-            return []
+            logger.error(f"RPC Error: {e}")
+            return None
+
+    def _decode_pool_data(self, data: bytes) -> Optional[Dict]:
+        """Декодирует данные пула"""
+        try:
+            return {
+                "address": str(data[0:32]),  # Примерное извлечение адреса
+                "liquidity": int.from_bytes(data[64:72], "little") / 1e9,
+                "volume_5m": int.from_bytes(data[80:88], "little") / 1e9,
+                "bin_step": int.from_bytes(data[88:90], "little"),
+            }
+        except Exception as e:
+            logger.warning(f"Decoding error: {e}")
+            return None
 
     async def start_monitoring(self, interval=60):
         """Запуск периодического мониторинга"""
