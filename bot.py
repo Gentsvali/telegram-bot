@@ -71,14 +71,6 @@ COMPUTE_BUDGET = {
     "DEFAULT_PRICE": 1
 }
 
-# Обновленные RPC эндпоинты с приоритетами
-RPC_ENDPOINTS = [
-    {
-        'url': f'https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}',
-        'priority': 1,
-        'timeout': 30
-    }
-]
 # Настройка логгера
 def setup_logger():
     logger = logging.getLogger(__name__)
@@ -121,7 +113,8 @@ required_env_vars = [
     "GITHUB_TOKEN", 
     "USER_ID", 
     "WEBHOOK_URL",
-    "RPC_URL"
+    "RPC_URL",
+    "HELIUS_API_KEY"  # Добавьте это
 ]
 
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
@@ -143,6 +136,15 @@ application = (
     .token(TELEGRAM_TOKEN)
     .build()
 )
+
+# Обновленные RPC эндпоинты с приоритетами
+RPC_ENDPOINTS = [
+    {
+        'url': f'https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}',
+        'priority': 1,
+        'timeout': 30
+    }
+]
 
 async def init_monitoring():
     """Инициализация системы мониторинга"""
@@ -224,7 +226,7 @@ class HeliusClient:
             return None
 
 # Создаем глобальный экземпляр клиента
-solana_client = SolanaClient()
+solana_client = HeliusClient()
 
 async def track_dlmm_pools():
     """Мониторинг пулов с улучшенной обработкой ошибок и rate-limiting"""
