@@ -688,27 +688,31 @@ class PoolMonitor:
         self.max_rpc_errors = 5
 
     async def _get_pools_data(self):
-        """Получение данных пулов через RPC"""
+        """Получение данных пулов через RPC с таймаутом"""
         try:
-            # Создаем базовый запрос без фильтров
-            response = await self.solana_client.client.get_program_accounts(
-                Pubkey.from_string(DLMM_PROGRAM_ID),
-                encoding="base64",  # используем base64 кодировку как указано в документации
-                commitment=Commitment("confirmed")
-            )
-        
-            logger.debug(f"Получен ответ: {response}")
-        
-            if response and hasattr(response, 'value'):
-                return response.value
-            return None
+            # Создаем таймаут для запроса
+            async with asyncio.timeout(30):  # 30 секунд максимум
+                response = await self.solana_client.client.get_program_accounts(
+                    Pubkey.from_string(DLMM_PROGRAM_ID),
+                    encoding="base64",
+                    commitment=Commitment("confirmed")
+                )
+            
+                logger.debug(f"Получен ответ: {response}")
+            
+                if response and hasattr(response, 'value'):
+                    return response.value
+                return None
 
+        except asyncio.TimeoutError:
+            logger.error("Таймаут запроса get_program_accounts")
+            return None
         except Exception as e:
             logger.error(f"Ошибка получения данных пулов: {str(e)}")
             return None
 
     async def refresh_pools(self):
-        """Обновление данных пулов с улучшенной обработкой ошибок"""
+        """Обновление данных пулов с обработкой таймаутов"""
         try:
             if self.rpc_errors >= self.max_rpc_errors:
                 logger.warning("Превышено максимальное количество ошибок RPC")
@@ -719,39 +723,27 @@ class PoolMonitor:
 
             self.processing = True
             logger.debug("Начало обновления данных пулов...")
+        
+            # Добавляем таймаут для всей операции
+            async with asyncio.timeout(60):  # 60 секунд максимум
+                accounts = await self._get_pools_data()
             
-            accounts = await self._get_pools_data()
-            
-            if not accounts:
-                logger.warning("Не получены данные пулов")
-                return False
+                if not accounts:
+                    logger.warning("Не получены данные пулов")
+                    return False
                 
-            new_pools = updated_pools = 0
-            for account in accounts:
-                try:
-                    pool_id = str(account.pubkey)
-                    if pool_id not in self.pools_cache:
-                        new_pools += 1
-                    elif self.pools_cache[pool_id].account.data != account.account.data:
-                        updated_pools += 1
-                    self.pools_cache[pool_id] = account
-                except Exception as e:
-                    logger.warning(f"Ошибка обработки пула: {str(e)}")
-                    continue
-
-            self.last_update = datetime.now()
-            logger.info(
-                f"Обновлено пулов: новых {new_pools}, измененных {updated_pools}, "
-                f"всего {len(self.pools_cache)}"
-            )
-            return True
+                logger.info(f"Получено аккаунтов: {len(accounts)}")
+                return True
             
+        except asyncio.TimeoutError:
+            logger.error("Таймаут операции обновления пулов")
+            return False
         except Exception as e:
             logger.error(f"Ошибка обновления: {str(e)}")
             return False
         finally:
             self.processing = False
-
+ 
     async def start_monitoring(self, interval=60):
         """Запуск мониторинга"""
         while True:
