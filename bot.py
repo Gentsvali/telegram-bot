@@ -684,30 +684,58 @@ class PoolMonitor:
         self.max_rpc_errors = 5
 
     async def _get_pools_data(self):
-        """Получение данных пулов для solana-py >= 0.29"""
+        """Универсальный метод получения данных пулов"""
         try:
-            filters = [
-                MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode()),
-                DataSliceOpts(offset=0, length=165)
-            ]
-            
-            response = await self.solana_client.client.get_program_accounts(
-                Pubkey.from_string(DLMM_PROGRAM_ID),
-                encoding="base64",
-                filters=filters,
-                commitment=Commitment("confirmed")
-            )
-            
+            # Пробуем разные варианты в зависимости от доступного API
+            try:
+                # Вариант 1: Для новых версий solana-py (0.29+)
+                from solana.rpc.types import MemcmpOpts
+                filters = [
+                    MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode())
+                ]
+                response = await self.solana_client.client.get_program_accounts(
+                    Pubkey.from_string(DLMM_PROGRAM_ID),
+                    encoding="base64",
+                    filters=filters,
+                    data_size=165,
+                    commitment=Commitment("confirmed")
+                )
+            except (ImportError, AttributeError):
+                # Вариант 2: Для старых версий
+                response = await self.solana_client.client.get_program_accounts(
+                    Pubkey.from_string(DLMM_PROGRAM_ID),
+                    encoding="base64",
+                    memcmp_opts={
+                        "offset": 0,
+                        "bytes": base58.b58encode(bytes([1])).decode()
+                    },
+                    data_size=165,
+                    commitment=Commitment("confirmed")
+                )
+
             self.rpc_errors = 0
             return response.value if response else None
-            
+
         except Exception as e:
             self.rpc_errors += 1
-            logger.error(f"RPC Error #{self.rpc_errors}: {str(e)}", exc_info=True)
+            logger.error(f"RPC Error #{self.rpc_errors}: {str(e)}")
+            
+            # Аварийный вариант: без фильтров
+            if self.rpc_errors > 2:
+                try:
+                    response = await self.solana_client.client.get_program_accounts(
+                        Pubkey.from_string(DLMM_PROGRAM_ID),
+                        encoding="base64",
+                        commitment=Commitment("confirmed")
+                    )
+                    return response.value if response else None
+                except Exception as fallback_e:
+                    logger.error(f"Fallback RPC Error: {str(fallback_e)}")
+            
             return None
 
     async def refresh_pools(self):
-        """Обновление данных пулов"""
+        """Обновление данных пулов с улучшенной обработкой ошибок"""
         try:
             if self.rpc_errors >= self.max_rpc_errors:
                 logger.warning("Превышено максимальное количество ошибок RPC")
@@ -761,27 +789,6 @@ class PoolMonitor:
         """Остановка мониторинга"""
         self.processing = False
         logger.info("Мониторинг пулов остановлен")
-
-    async def _monitoring_loop(self, interval):
-        """Основной цикл мониторинга"""
-        while not self._should_stop:
-            try:
-                success = await self.refresh_pools()
-                wait_time = interval if success else min(5, interval)
-                await asyncio.sleep(wait_time)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Ошибка в цикле мониторинга: {str(e)}")
-                await asyncio.sleep(5)
-
-    def get_pool_stats(self):
-        """Получение статистики по пулам"""
-        return {
-            "total_pools": len(self.pools_cache),
-            "last_update": self.last_update.isoformat(),
-            "rpc_errors": self.rpc_errors
-        }
 
 pool_monitor = PoolMonitor(solana_client)
 
