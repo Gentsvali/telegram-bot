@@ -680,76 +680,117 @@ class PoolMonitor:
         self.pools_cache = {}
         self.last_update = datetime.now()
         self.processing = False
+        self.rpc_errors = 0
+        self.max_rpc_errors = 5
 
     async def _get_pools_data(self):
-        """Получение данных DLMM пулов"""
+        """Универсальный метод получения данных пулов с автоматическим определением формата"""
         try:
-            filters = [
-                {
-                    "memcmp": {
-                        "offset": 0,
-                        "bytes": base58.b58encode(bytes([1])).decode('utf-8')
-                    }
+            # Подготовка базовых параметров
+            base_filters = {
+                "memcmp": {
+                    "offset": 0,
+                    "bytes": base58.b58encode(bytes([1])).decode('utf-8')
                 },
-                {
-                    "dataSize": 165  # Размер данных аккаунта пула
-                }
-            ]
-            
+                "dataSize": 165
+            }
+
+            # Динамическое определение формата фильтров
+            try:
+                from solana.rpc.types import MemcmpOpts, DataSliceOpts
+                filters = [
+                    MemcmpOpts(offset=0, bytes=base58.b58encode(bytes([1])).decode('utf-8')),
+                    DataSliceOpts(offset=0, length=165)
+                ]
+            except (ImportError, AttributeError):
+                filters = [base_filters]
+
             response = await self.solana_client.client.get_program_accounts(
                 Pubkey.from_string(DLMM_PROGRAM_ID),
                 encoding="base64",
                 filters=filters,
-                commitment=Commitment("confirmed")
+                commitment=Commitment("confirmed"),
+                timeout=30
             )
-            return response.value if response else None
             
+            self.rpc_errors = 0  # Сброс счетчика ошибок
+            return response.value if response and hasattr(response, 'value') else None
+
         except Exception as e:
-            logger.error(f"RPC Error: {str(e)}", exc_info=True)
+            self.rpc_errors += 1
+            logger.error(f"RPC Error #{self.rpc_errors}: {str(e)}")
+            
+            if self.rpc_errors >= self.max_rpc_errors:
+                logger.critical("Достигнуто максимальное количество ошибок RPC")
+                if hasattr(self.solana_client, 'switch_endpoint'):
+                    await self.solana_client.switch_endpoint()
+                    self.rpc_errors = 0
+            
             return None
 
     async def refresh_pools(self):
-        """Обновление данных пулов"""
+        """Обновление данных пулов с улучшенной обработкой ошибок"""
         try:
+            if self.rpc_errors >= self.max_rpc_errors:
+                logger.warning("Пропуск обновления из-за множественных ошибок RPC")
+                return False
+
             self.processing = True
-            logger.debug("Starting pools update...")
+            logger.debug("Начало обновления данных пулов...")
             
             accounts = await self._get_pools_data()
             
             if not accounts:
-                logger.warning("No pool data received")
+                logger.warning("Не получены данные пулов")
                 return False
                 
-            # Обработка полученных данных
-            new_count = updated_count = 0
+            # Обработка данных
+            stats = {
+                'new': 0,
+                'updated': 0,
+                'total': len(self.pools_cache)
+            }
+
             for account in accounts:
-                pool_address = str(account.pubkey)
-                
-                if pool_address not in self.pools_cache:
-                    new_count += 1
-                elif self.pools_cache[pool_address].account.data != account.account.data:
-                    updated_count += 1
+                try:
+                    pool_id = str(account.pubkey)
+                    cached = self.pools_cache.get(pool_id)
                     
-                self.pools_cache[pool_address] = account
-                
+                    if not cached:
+                        stats['new'] += 1
+                    elif cached.account.data != account.account.data:
+                        stats['updated'] += 1
+                        
+                    self.pools_cache[pool_id] = account
+                except Exception as e:
+                    logger.warning(f"Ошибка обработки пула: {str(e)}")
+                    continue
+
             self.last_update = datetime.now()
             logger.info(
-                f"Pools updated - New: {new_count}, Updated: {updated_count}, "
-                f"Total: {len(self.pools_cache)}"
+                f"Обновление завершено: "
+                f"Новых: {stats['new']}, "
+                f"Измененных: {stats['updated']}, "
+                f"Всего: {len(self.pools_cache)}"
             )
             return True
             
         except Exception as e:
-            logger.error(f"Update error: {str(e)}", exc_info=True)
+            logger.error(f"Критическая ошибка обновления: {str(e)}", exc_info=True)
             return False
         finally:
             self.processing = False
 
     async def start_monitoring(self, interval=60):
-        """Запуск мониторинга"""
+        """Запуск мониторинга с автоматическим восстановлением"""
         while True:
-            success = await self.refresh_pools()
-            await asyncio.sleep(interval if success else 5)
+            try:
+                success = await self.refresh_pools()
+                wait_time = interval if success else min(5 * self.rpc_errors, 300)
+                await asyncio.sleep(wait_time)
+            except Exception as e:
+                logger.critical(f"Аварийная остановка мониторинга: {str(e)}")
+                await asyncio.sleep(30)
 
 pool_monitor = PoolMonitor(solana_client)
 
