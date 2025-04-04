@@ -94,14 +94,14 @@ WEBSOCKET_SUBSCRIBE_MSG = {
     "method": "logsSubscribe",
     "params": [
         {
-            "mentions": ["LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"]
+            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
         },
         {
-            "commitment": "confirmed"
+            "commitment": "confirmed",
+            "encoding": "jsonParsed"  # Добавляем для получения расшифрованных данных
         }
     ]
 }
-
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
@@ -321,44 +321,37 @@ async def handle_websocket_connection():
             await asyncio.sleep(WS_RECONNECT_TIMEOUT)
 
 async def maintain_websocket_connection():
-    """Поддерживает WebSocket подключение активным"""
     while True:
         try:
             async with websockets.connect(HELIUS_WS_URL) as websocket:
-                # Отправляем начальную подписку
-                subscribe_message = {
-                    "jsonrpc": "2.0", 
-                    "id": 1,
-                    "method": "logsSubscribe",
-                    "params": [
-                        {
-                            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
-                        },
-                        {
-                            "commitment": "confirmed"
-                        }
-                    ]
-                }
-                await websocket.send(json.dumps(subscribe_message))
+                await websocket.send(json.dumps(WEBSOCKET_SUBSCRIBE_MSG))
                 logger.info("WebSocket подписка установлена")
                 
-                while True:
-                    try:
+                # Запускаем ping/pong
+                ping_task = asyncio.create_task(keep_alive(websocket))
+                
+                try:
+                    while True:
                         message = await websocket.recv()
                         await process_websocket_message(message)
-                    except Exception as e:
-                        logger.error(f"Ошибка в цикле websocket: {e}")
-                        break
-                        
+                except Exception as e:
+                    logger.error(f"Ошибка в основном цикле websocket: {e}")
+                    ping_task.cancel()
+                    raise
+                    
         except Exception as e:
             logger.error(f"Ошибка websocket соединения: {e}")
             await asyncio.sleep(5)
 
 async def keep_alive(websocket):
-    """Поддерживает WebSocket соединение активным через ping/pong"""
     while True:
         try:
-            await websocket.ping()
+            ping_message = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "ping"
+            }
+            await websocket.send(json.dumps(ping_message))
             await asyncio.sleep(30)
         except Exception as e:
             logger.error(f"Ошибка ping/pong: {e}")
@@ -398,17 +391,16 @@ async def process_transaction_logs(logs: List[str]):
         logger.error(f"Ошибка обработки логов: {e}")
 
 async def process_websocket_message(message: str):
-    """Обрабатывает входящие WebSocket сообщения"""
     try:
         data = json.loads(message)
+        logger.info(f"Получено WebSocket сообщение: {data}")  # Добавляем логирование
         
-        # Проверяем, что это уведомление о логах
         if data.get("method") == "logsNotification":
             result = data.get("params", {}).get("result", {})
             value = result.get("value", {})
             
-            # Проверяем наличие логов и отсутствие ошибок
             if "logs" in value and not value.get("err"):
+                logger.info(f"Обрабатываем логи: {value['logs']}")  # Добавляем логирование
                 await process_transaction_logs(value["logs"])
                 
     except json.JSONDecodeError:
