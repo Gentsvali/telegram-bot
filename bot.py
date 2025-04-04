@@ -364,25 +364,6 @@ async def keep_alive(websocket):
             logger.error(f"Ошибка ping/pong: {e}")
             break
 
-async def process_websocket_message(message: str):
-    """Обрабатывает входящие WebSocket сообщения"""
-    try:
-        data = json.loads(message)
-        
-        # Проверяем, что это уведомление о логах
-        if data.get("method") == "logsNotification": [(2)](https://solana.com/docs/rpc/websocket/logssubscribe)
-            result = data.get("params", {}).get("result", {})
-            value = result.get("value", {})
-            
-            # Проверяем наличие логов и отсутствие ошибок
-            if "logs" in value and not value.get("err"): [(2)](https://solana.com/docs/rpc/websocket/logssubscribe)
-                await process_transaction_logs(value["logs"])
-                
-    except json.JSONDecodeError:
-        logger.error("Ошибка декодирования JSON сообщения")
-    except Exception as e:
-        logger.error(f"Ошибка обработки websocket сообщения: {e}")
-
 async def unsubscribe_websocket(websocket):
     """Отписывается от WebSocket подписки"""
     try:
@@ -402,7 +383,7 @@ async def process_transaction_logs(logs: List[str]):
     try:
         # Ищем в логах информацию о создании или обновлении пула
         for log in logs:
-            if "Initialize" in log or "UpdatePool" in log: [(1)](https://solana.stackexchange.com/questions/13204/helius-webhook-for-get-real-time-information-about-new-tokens-created)
+            if "Initialize" in log or "UpdatePool" in log:
                 # Извлекаем данные пула из лога
                 pool_data = await get_pool_data_from_log(log)
                 if pool_data and filter_pool(pool_data):
@@ -415,6 +396,25 @@ async def process_transaction_logs(logs: List[str]):
                         )
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
+
+async def process_websocket_message(message: str):
+    """Обрабатывает входящие WebSocket сообщения"""
+    try:
+        data = json.loads(message)
+        
+        # Проверяем, что это уведомление о логах
+        if data.get("method") == "logsNotification":
+            result = data.get("params", {}).get("result", {})
+            value = result.get("value", {})
+            
+            # Проверяем наличие логов и отсутствие ошибок
+            if "logs" in value and not value.get("err"):
+                await process_transaction_logs(value["logs"])
+                
+    except json.JSONDecodeError:
+        logger.error("Ошибка декодирования JSON сообщения")
+    except Exception as e:
+        logger.error(f"Ошибка обработки websocket сообщения: {e}")
 
 # Инициализация Quart приложения
 app = Quart(__name__)
