@@ -48,6 +48,18 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("solana").setLevel(logging.WARNING)
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
+# Загрузка переменных окружения
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+REPO_OWNER = "Gentsvali"
+REPO_NAME = "telegram-bot"
+FILE_PATH = "filters.json"
+USER_ID = int(os.getenv("USER_ID"))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.environ.get("PORT", 10000))
+HELIUS_RPC_URL = os.getenv("HELIUS_RPC_URL") 
+HELIUS_WS_URL = os.getenv("HELIUS_WS_URL")
+  
 # Проверка наличия обязательных переменных окружения
 required_env_vars = [
     "TELEGRAM_TOKEN", 
@@ -65,18 +77,6 @@ if missing_vars:
     )
     logger.error(error_message)
     raise ValueError(error_message)
-
-# Загрузка переменных окружения
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-REPO_OWNER = "Gentsvali"
-REPO_NAME = "telegram-bot"
-FILE_PATH = "filters.json"
-USER_ID = int(os.getenv("USER_ID"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.environ.get("PORT", 10000))
-HELIUS_RPC_URL = os.getenv("HELIUS_RPC_URL") 
-HELIUS_WS_URL = os.getenv("HELIUS_WS_URL")  
 
 # Настройки Solana
 COMMITMENT = "confirmed"
