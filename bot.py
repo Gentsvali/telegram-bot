@@ -372,21 +372,21 @@ async def unsubscribe_websocket(websocket):
         logger.error(f"Ошибка отписки от WebSocket: {e}")
 
 async def process_transaction_logs(logs: List[str]):
-    """Обработка логов транзакций"""
     try:
-        # Ищем в логах информацию о создании или обновлении пула
         for log in logs:
-            if "Initialize" in log or "UpdatePool" in log:
-                # Извлекаем данные пула из лога
-                pool_data = await get_pool_data_from_log(log)
-                if pool_data and filter_pool(pool_data):
-                    message = format_pool_message(pool_data)
-                    if message:
-                        await application.bot.send_message(
-                            chat_id=USER_ID,
-                            text=message,
-                            parse_mode="Markdown"
-                        )
+            # Ищем только логи от программы Meteora DLMM
+            if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
+                # Проверяем, содержит ли лог информацию о пуле
+                if "Instruction: Initialize" in log or "Instruction: Swap" in log:
+                    pool_data = await get_pool_data_from_log(log)
+                    if pool_data and filter_pool(pool_data):
+                        message = format_pool_message(pool_data)
+                        if message:
+                            await application.bot.send_message(
+                                chat_id=USER_ID,
+                                text=message,
+                                parse_mode="Markdown"
+                            )
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
 
