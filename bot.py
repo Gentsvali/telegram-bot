@@ -369,17 +369,19 @@ async def process_websocket_message(message: str):
     try:
         data = json.loads(message)
         
-        if data.get("method") == "logsNotification":
+        # Проверяем, что это уведомление о логах
+        if data.get("method") == "logsNotification": [(2)](https://solana.com/docs/rpc/websocket/logssubscribe)
             result = data.get("params", {}).get("result", {})
             value = result.get("value", {})
             
-            if "logs" in value and not value.get("err"):
+            # Проверяем наличие логов и отсутствие ошибок
+            if "logs" in value and not value.get("err"): [(2)](https://solana.com/docs/rpc/websocket/logssubscribe)
                 await process_transaction_logs(value["logs"])
                 
     except json.JSONDecodeError:
-        logger.error("Ошибка декодирования JSON")
+        logger.error("Ошибка декодирования JSON сообщения")
     except Exception as e:
-        logger.error(f"Ошибка обработки сообщения: {e}")
+        logger.error(f"Ошибка обработки websocket сообщения: {e}")
 
 async def unsubscribe_websocket(websocket):
     """Отписывается от WebSocket подписки"""
@@ -394,6 +396,25 @@ async def unsubscribe_websocket(websocket):
         logger.info("Успешная отписка от WebSocket")
     except Exception as e:
         logger.error(f"Ошибка отписки от WebSocket: {e}")
+
+async def process_transaction_logs(logs: List[str]):
+    """Обработка логов транзакций"""
+    try:
+        # Ищем в логах информацию о создании или обновлении пула
+        for log in logs:
+            if "Initialize" in log or "UpdatePool" in log: [(1)](https://solana.stackexchange.com/questions/13204/helius-webhook-for-get-real-time-information-about-new-tokens-created)
+                # Извлекаем данные пула из лога
+                pool_data = await get_pool_data_from_log(log)
+                if pool_data and filter_pool(pool_data):
+                    message = format_pool_message(pool_data)
+                    if message:
+                        await application.bot.send_message(
+                            chat_id=USER_ID,
+                            text=message,
+                            parse_mode="Markdown"
+                        )
+    except Exception as e:
+        logger.error(f"Ошибка обработки логов: {e}")
 
 # Инициализация Quart приложения
 app = Quart(__name__)
