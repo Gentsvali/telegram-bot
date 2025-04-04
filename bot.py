@@ -538,10 +538,6 @@ def setup_command_handlers(application: ApplicationBuilder):
                 "filters", 
                 show_filters,
                 filters=filters.User(user_id=USER_ID)
-            ),
-            MessageHandler(
-                filters=filters.User(user_id=USER_ID) & filters.TEXT & ~filters.COMMAND,
-                callback=update_filters_via_json
             )
         ]
         for handler in filter_handlers:
