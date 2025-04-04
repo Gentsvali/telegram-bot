@@ -307,39 +307,20 @@ async def handle_websocket_connection():
             await asyncio.sleep(WS_RECONNECT_TIMEOUT)
 
 async def maintain_websocket_connection():
-    """Поддерживает WebSocket подключение активным"""
     while True:
         try:
             async with websockets.connect(HELIUS_WS_URL) as websocket:
-                # Отправляем начальную подписку
-                subscribe_message = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "logsSubscribe",
-                    "params": [
-                        {
-                            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
-                        },
-                        {
-                            "commitment": "confirmed"
-                        }
-                    ]
-                }
-                
+                # Отправляем подписку
                 await websocket.send(json.dumps(subscribe_message))
                 
-                # Запускаем ping/pong для поддержания соединения
-                ping_task = asyncio.create_task(keep_alive(websocket))
-                
-                try:
-                    while True:
+                while True:
+                    try:
                         message = await websocket.recv()
-                        asyncio.create_task(process_websocket_message(message))
-                except Exception as e:
-                    logger.error(f"Ошибка в основном цикле websocket: {e}")
-                    ping_task.cancel()
-                    raise
-                    
+                        await process_websocket_message(message)
+                    except Exception as e:
+                        logger.error(f"Ошибка в цикле websocket: {e}")
+                        break
+                        
         except Exception as e:
             logger.error(f"Ошибка websocket соединения: {e}")
             await asyncio.sleep(5)
