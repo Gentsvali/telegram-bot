@@ -421,23 +421,35 @@ async def process_websocket_message(message: str):
     try:
         data = json.loads(message)
         
-        # Проверяем, что это уведомление о логах
-        if data.get("method") == "logsNotification":
+        # Проверяем только важные сообщения Meteora
+        if "method" in data and data["method"] == "logsNotification":
             result = data.get("params", {}).get("result", {})
             value = result.get("value", {})
             
             if "logs" in value:
-                if value.get("err"):
-                    logger.debug(f"Транзакция с ошибкой: {value['err']}")
-                    return
-                    
-                logger.info(f"Обрабатываем логи: {value['logs']}")
-                await process_transaction_logs(value["logs"])
+                meteora_logs = []
+                for log in value["logs"]:
+                    # Фильтруем только важные инструкции Meteora
+                    if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
+                        if any(x in log for x in ["Initialize", "UpdatePool"]):
+                            # Логируем только важные события
+                            logger.info(f"Важное событие Meteora: {log}")
+                            meteora_logs.append(log)
                 
-    except json.JSONDecodeError:
-        logger.error("Ошибка декодирования JSON сообщения")
+                if meteora_logs:
+                    # Обрабатываем только если нашли важные логи
+                    pool_data = await get_pool_data_from_log("\n".join(meteora_logs))
+                    if pool_data and filter_pool(pool_data):
+                        message = format_pool_message(pool_data)
+                        if message:
+                            await application.bot.send_message(
+                                chat_id=USER_ID,
+                                text=message,
+                                parse_mode="Markdown"
+                            )
+                            
     except Exception as e:
-        logger.error(f"Ошибка обработки websocket сообщения: {e}")
+        logger.error(f"Ошибка обработки сообщения: {e}")
 
 # Инициализация Quart приложения
 app = Quart(__name__)
