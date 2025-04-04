@@ -731,11 +731,14 @@ class PoolMonitor:
         finally:
             self.processing = False
  
-    async def start_monitoring(self, interval=60):
-        """Запуск мониторинга"""
+    async def start_monitoring(self):
         while True:
-            success = await self.refresh_pools()
-            await asyncio.sleep(interval if success else 5)
+            try:
+                await self.refresh_pools()  # Должен быть async!
+                await asyncio.sleep(60)  # Не time.sleep!
+            except Exception as e:
+                logger.error(f"Ошибка мониторинга: {e}")
+                await asyncio.sleep(5)
 
     async def stop_monitoring(self):
         """Остановка мониторинга"""
@@ -892,20 +895,9 @@ class WebhookServer:
             logger.error(f"Ошибка запуска сервера: {e}")
             raise
 
+webhook_server = WebhookServer(application, pool_monitor, filter_manager)
 app = webhook_server.app
 
 if __name__ == "__main__":
-    try:
-        webhook_server = WebhookServer(
-            application, 
-            pool_monitor, 
-            filter_manager
-        )
-        webhook_server.app.run(
-            host='0.0.0.0', 
-            port=PORT,
-            use_reloader=False
-        )
-    except Exception as e:
-        logger.critical(f"Критическая ошибка: {e}")
-        sys.exit(1)
+    # Локальный запуск (для тестов)
+    app.run(host="0.0.0.0", port=PORT)
