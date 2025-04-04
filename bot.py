@@ -371,27 +371,6 @@ async def process_websocket_message(message: str):
     except Exception as e:
         logger.error(f"Ошибка обработки websocket сообщения: {e}")
 
-async def process_transaction_logs(logs: List[str]):
-    """Обработка логов транзакций"""
-    try:
-        # Ищем в логах информацию о создании или обновлении пула
-        for log in logs:
-            if "Initialize" in log or "UpdatePool" in log:
-                # Извлекаем адрес пула из лога
-                # Примечание: это упрощенный пример, вам нужно будет настроить
-                # парсинг в соответствии с форматом логов Meteora
-                pool_data = await get_pool_data_from_log(log)
-                if pool_data and filter_pool(pool_data):
-                    message = format_pool_message(pool_data)
-                    if message:
-                        await application.bot.send_message(
-                            chat_id=USER_ID,
-                            text=message,
-                            parse_mode="Markdown"
-                        )
-    except Exception as e:
-        logger.error(f"Ошибка обработки логов: {e}")
-
 # Инициализация Quart приложения
 app = Quart(__name__)
 
@@ -1397,31 +1376,22 @@ async def startup_sequence():
 
 if __name__ == "__main__":
     try:
-        # Запускаем последовательность запуска
         if asyncio.run(startup_sequence()):
             logger.info(f"🚀 Запускаем сервер на порту {PORT}...")
+            
+            # Либо запускаем Quart app, либо мониторинг пулов
+            # Выберите один вариант:
+            
+            # Вариант 1: Запуск Quart сервера
             app.run(host='0.0.0.0', port=PORT)
+            
+            # ИЛИ Вариант 2: Запуск мониторинга
+            # asyncio.run(monitor_pools())
+            
         else:
             logger.error("❌ Ошибка при запуске приложения")
             sys.exit(1)
+            
     except Exception as e:
         logger.error(f"💥 Критическая ошибка: {e}")
         sys.exit(1)
-        raise Exception("Не удалось получить данные от RPC")
-
-            current_count = len(response.value)
-            
-            # 2. Если появились новые пулы
-            if current_count > last_count:
-                message = f"🔍 Новых пулов: {current_count - last_count}\nВсего: {current_count}"
-                await bot.send_message(CHAT_ID, message)
-                last_count = current_count
-                
-        except Exception as e:
-            print(f"🚨 Ошибка: {e}")
-            await asyncio.sleep(10)  # Пауза при ошибке
-        
-        await asyncio.sleep(60)  # Проверка каждые 60 секунд
-
-if __name__ == "__main__":
-    asyncio.run(monitor_pools())
