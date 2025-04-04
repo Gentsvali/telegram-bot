@@ -540,11 +540,6 @@ def setup_command_handlers(application: ApplicationBuilder):
                 filters=filters.User(user_id=USER_ID)
             ),
             CommandHandler(
-                "setfilter", 
-                set_filter,
-                filters=filters.User(user_id=USER_ID)
-            ),
-            CommandHandler(
                 "getfiltersjson", 
                 get_filters_json,
                 filters=filters.User(user_id=USER_ID)
