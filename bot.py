@@ -89,21 +89,17 @@ WS_RECONNECT_TIMEOUT = 30  # секунды между попытками пер
 
 # В начале файла, рядом с другими константами
 WEBSOCKET_SUBSCRIBE_MSG = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "logsSubscribe",
-    "params": [
-        {
-            "mentions": ["LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"],
-            "filters": [
-                {"dataSize": 165}  # Размер данных DLMM пула
-            ]
-        },
-        {
-            "commitment": "confirmed",
-            "encoding": "jsonParsed"
-        }
-    ]
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "logsSubscribe",
+  "params": [
+    {
+      "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
+    },
+    {
+      "commitment": "confirmed"
+    }
+  ]
 }
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -384,6 +380,7 @@ async def process_transaction_logs(logs: List[str]):
                 await send_notification(log)
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
+
 async def process_websocket_message(message: str):
     """Обрабатывает входящие WebSocket сообщения"""
     try:
