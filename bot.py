@@ -66,7 +66,8 @@ required_env_vars = [
     "GITHUB_TOKEN", 
     "USER_ID", 
     "WEBHOOK_URL",
-    "RPC_URL"  # Добавлен RPC URL для Solana
+    "HELIUS_WS_URL", 
+    "HELIUS_RPC_URL"
 ]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 
@@ -153,7 +154,6 @@ application = (
     .get_updates_http_version("1.1")
     .build()
 )
-
 
 async def load_filters(app=None):
     """Загружает фильтры из файла или использует значения по умолчанию"""
