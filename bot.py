@@ -16,23 +16,28 @@ async def monitor_pools():
     
     while True:
         try:
-            pools = await client.get_program_accounts(
+            # 1. Запрашиваем пулы DLMM
+            response = await client.get_program_accounts(
                 "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
                 encoding="jsonParsed"
             )
-            current_count = len(pools.value)
             
+            if not response or not hasattr(response, 'value'):
+                raise Exception("Не удалось получить данные от RPC")
+
+            current_count = len(response.value)
+            
+            # 2. Если появились новые пулы
             if current_count > last_count:
-                await bot.send_message(
-                    chat_id=CHAT_ID,
-                    text=f"🔍 Новых пулов: {current_count - last_count} | Всего: {current_count}"
-                )
+                message = f"🔍 Новых пулов: {current_count - last_count}\nВсего: {current_count}"
+                await bot.send_message(CHAT_ID, message)
                 last_count = current_count
                 
         except Exception as e:
-            print(f"Ошибка: {e}")
+            print(f"🚨 Ошибка: {e}")
+            await asyncio.sleep(10)  # Пауза при ошибке
         
-        await asyncio.sleep(60)
+        await asyncio.sleep(60)  # Проверка каждые 60 секунд
 
 if __name__ == "__main__":
     asyncio.run(monitor_pools())
