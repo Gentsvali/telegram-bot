@@ -1406,7 +1406,8 @@ if __name__ == "__main__":
             sys.exit(1)
     except Exception as e:
         logger.error(f"💥 Критическая ошибка: {e}")
-        sys.exit(1)               raise Exception("Не удалось получить данные от RPC")
+        sys.exit(1)
+        raise Exception("Не удалось получить данные от RPC")
 
             current_count = len(response.value)
             
