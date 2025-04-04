@@ -58,19 +58,6 @@ DLMM_CONFIG = {
     "retry_delay": 10  # Задержка при ошибках
 }
 
-# Константы для работы с транзакциями [(2)](https://solana.com/developers/guides/advanced/retry)
-TX_CONFIG = {
-    "retries": 3,
-    "timeout": 30,
-    "delay_between_retries": 1
-}
-
-# Константы для compute budget [(4)](https://solana.com/developers/guides/advanced/how-to-request-optimal-compute)
-COMPUTE_BUDGET = {
-    "DEFAULT_UNITS": 300,
-    "DEFAULT_PRICE": 1
-}
-
 # Настройка логгера
 def setup_logger():
     logger = logging.getLogger(__name__)
@@ -687,6 +674,9 @@ class PoolMonitor:
         self.rpc_errors = 0
         self.max_rpc_errors = 5
 
+    def get_pool_stats(self):
+    return {"total": len(self.pools_cache)}
+
     async def _get_pools_data(self):
         """Получение данных пулов через RPC с таймаутом"""
         try:
@@ -752,7 +742,7 @@ class PoolMonitor:
 
     async def stop_monitoring(self):
         """Остановка мониторинга"""
-        self.processing = False
+        self.running = False
         logger.info("Мониторинг пулов остановлен")
 
 pool_monitor = PoolMonitor(solana_client)
@@ -902,9 +892,20 @@ class WebhookServer:
             logger.error(f"Ошибка запуска сервера: {e}")
             raise
 
-webhook_server = WebhookServer(application, pool_monitor, filter_manager)
 app = webhook_server.app
 
 if __name__ == "__main__":
-    webhook_server = WebhookServer(...)
-    webhook_server.app.run(host='0.0.0.0', port=PORT)
+    try:
+        webhook_server = WebhookServer(
+            application, 
+            pool_monitor, 
+            filter_manager
+        )
+        webhook_server.app.run(
+            host='0.0.0.0', 
+            port=PORT,
+            use_reloader=False
+        )
+    except Exception as e:
+        logger.critical(f"Критическая ошибка: {e}")
+        sys.exit(1)
