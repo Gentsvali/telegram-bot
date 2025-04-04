@@ -539,11 +539,6 @@ def setup_command_handlers(application: ApplicationBuilder):
                 show_filters,
                 filters=filters.User(user_id=USER_ID)
             ),
-            CommandHandler(
-                "getfiltersjson", 
-                get_filters_json,
-                filters=filters.User(user_id=USER_ID)
-            ),
             MessageHandler(
                 filters=filters.User(user_id=USER_ID) & filters.TEXT & ~filters.COMMAND,
                 callback=update_filters_via_json
@@ -570,7 +565,6 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - начать работу с ботом\n"
         "/filters - показать текущие фильтры\n"
         "/setfilter - установить фильтр\n"
-        "/getfiltersjson - получить фильтры в JSON\n"
     )
 
 # Инициализация обработчиков
