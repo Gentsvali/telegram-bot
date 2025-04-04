@@ -89,18 +89,17 @@ WS_RECONNECT_TIMEOUT = 30  # секунды между попытками пер
 
 # В начале файла, рядом с другими константами
 WEBSOCKET_SUBSCRIBE_MSG = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "logsSubscribe",
-    "params": [
-        {
-            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
-        },
-        {
-            "commitment": "confirmed",
-            "encoding": "jsonParsed"  # Добавляем для получения расшифрованных данных
-        }
-    ]
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "logsSubscribe",
+  "params": [
+    {
+      "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
+    },
+    {
+      "commitment": "confirmed"
+    }
+  ]
 }
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -372,50 +371,15 @@ async def unsubscribe_websocket(websocket):
         logger.error(f"Ошибка отписки от WebSocket: {e}")
 
 async def process_transaction_logs(logs: List[str]):
-    """Обработка логов транзакций с улучшенной фильтрацией"""
     try:
-        meteora_logs = []
-        instruction_type = None
-        pool_address = None
-        
         for log in logs:
-            # Ищем только важные инструкции Meteora
-            if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
-                if "Program log: Instruction:" in log:
-                    instruction_type = log.split("Instruction: ")[-1].strip()
-                    logger.info(f"Найдена инструкция Meteora: {instruction_type}")
-                    
-                # Собираем данные о пуле
-                if instruction_type in ["Initialize", "UpdatePool"]:
-                    meteora_logs.append(log)
-                    
-                # Ищем адрес пула в логах программы
-                if "Program data:" in log:
-                    try:
-                        data = log.split("Program data: ")[-1].strip()
-                        # Здесь можно добавить парсинг данных пула
-                        logger.info(f"Найдены данные пула: {data[:100]}...")
-                    except Exception as e:
-                        logger.error(f"Ошибка парсинга данных пула: {e}")
-                        
-        if meteora_logs:
-            logger.info(f"Найдено {len(meteora_logs)} важных логов Meteora")
-            # Обработка данных пула
-            if pool_address:
-                pool_data = await get_pool_data_from_log("\n".join(meteora_logs))
-                if pool_data and filter_pool(pool_data):
-                    message = format_pool_message(pool_data)
-                    if message:
-                        await application.bot.send_message(
-                            chat_id=USER_ID,
-                            text=message,
-                            parse_mode="Markdown"
-                        )
-                        logger.info("Отправлено уведомление о пуле")
-                        
+            if "Instruction: InitializeMint" in log or "Instruction: MintTo" in log:
+                # Обработка создания нового пула
+                logger.info(f"Найден новый DLMM пул: {log}")
+                # Отправка уведомления
+                await send_notification(log)
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
-
 async def process_websocket_message(message: str):
     """Обрабатывает входящие WebSocket сообщения"""
     try:
