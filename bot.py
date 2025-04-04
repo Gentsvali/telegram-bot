@@ -89,17 +89,21 @@ WS_RECONNECT_TIMEOUT = 30  # секунды между попытками пер
 
 # В начале файла, рядом с другими константами
 WEBSOCKET_SUBSCRIBE_MSG = {
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "logsSubscribe",
-  "params": [
-    {
-      "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
-    },
-    {
-      "commitment": "confirmed"
-    }
-  ]
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "logsSubscribe",
+    "params": [
+        {
+            "mentions": ["LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"],
+            "filters": [
+                {"dataSize": 165}  # Размер данных DLMM пула
+            ]
+        },
+        {
+            "commitment": "confirmed",
+            "encoding": "jsonParsed"
+        }
+    ]
 }
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
