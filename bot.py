@@ -374,20 +374,35 @@ async def unsubscribe_websocket(websocket):
 async def process_transaction_logs(logs: List[str]):
     """Обработка логов транзакций с улучшенной фильтрацией"""
     try:
-        # Ищем логи инициализации или обновления пула
-        pool_logs = []
+        meteora_logs = []
+        instruction_type = None
+        pool_address = None
+        
         for log in logs:
+            # Ищем только важные инструкции Meteora
             if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
-                if "Instruction: Initialize" in log:
-                    logger.info("Найдена инициализация нового пула")
-                    pool_logs.append(log)
-                elif "Instruction: UpdatePool" in log:
-                    logger.info("Найдено обновление пула")
-                    pool_logs.append(log)
+                if "Program log: Instruction:" in log:
+                    instruction_type = log.split("Instruction: ")[-1].strip()
+                    logger.info(f"Найдена инструкция Meteora: {instruction_type}")
                     
-        if pool_logs:
-            for log in pool_logs:
-                pool_data = await get_pool_data_from_log(log)
+                # Собираем данные о пуле
+                if instruction_type in ["Initialize", "UpdatePool"]:
+                    meteora_logs.append(log)
+                    
+                # Ищем адрес пула в логах программы
+                if "Program data:" in log:
+                    try:
+                        data = log.split("Program data: ")[-1].strip()
+                        # Здесь можно добавить парсинг данных пула
+                        logger.info(f"Найдены данные пула: {data[:100]}...")
+                    except Exception as e:
+                        logger.error(f"Ошибка парсинга данных пула: {e}")
+                        
+        if meteora_logs:
+            logger.info(f"Найдено {len(meteora_logs)} важных логов Meteora")
+            # Обработка данных пула
+            if pool_address:
+                pool_data = await get_pool_data_from_log("\n".join(meteora_logs))
                 if pool_data and filter_pool(pool_data):
                     message = format_pool_message(pool_data)
                     if message:
@@ -396,7 +411,7 @@ async def process_transaction_logs(logs: List[str]):
                             text=message,
                             parse_mode="Markdown"
                         )
-                        logger.info(f"Отправлено уведомление о пуле")
+                        logger.info("Отправлено уведомление о пуле")
                         
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
