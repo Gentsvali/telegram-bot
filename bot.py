@@ -674,9 +674,6 @@ class PoolMonitor:
         self.rpc_errors = 0
         self.max_rpc_errors = 5
 
-    def get_pool_stats(self):
-    return {"total": len(self.pools_cache)}
-
     async def _get_pools_data(self):
         """Получение данных пулов через RPC с таймаутом"""
         try:
@@ -744,6 +741,9 @@ class PoolMonitor:
         """Остановка мониторинга"""
         self.running = False
         logger.info("Мониторинг пулов остановлен")
+
+    def get_pool_stats(self):
+        return {"total": len(self.pools_cache)}
 
 pool_monitor = PoolMonitor(solana_client)
 
