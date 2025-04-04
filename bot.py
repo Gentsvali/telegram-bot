@@ -1181,8 +1181,6 @@ def setup_command_handlers(application: ApplicationBuilder):
         for handler in filter_handlers:
             application.add_handler(handler)
 
-        )  # <-- Исправлено здесь
-
         logger.info("✅ Обработчики команд успешно зарегистрированы")
         
     except Exception as e:
