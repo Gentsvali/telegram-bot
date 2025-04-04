@@ -321,11 +321,26 @@ async def handle_websocket_connection():
             await asyncio.sleep(WS_RECONNECT_TIMEOUT)
 
 async def maintain_websocket_connection():
+    """Поддерживает WebSocket подключение активным"""
     while True:
         try:
             async with websockets.connect(HELIUS_WS_URL) as websocket:
-                # Отправляем подписку
-                await websocket.send(json.dumps(WEBSOCKET_SUBSCRIBE_MSG))
+                # Отправляем начальную подписку
+                subscribe_message = {
+                    "jsonrpc": "2.0", 
+                    "id": 1,
+                    "method": "logsSubscribe",
+                    "params": [
+                        {
+                            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
+                        },
+                        {
+                            "commitment": "confirmed"
+                        }
+                    ]
+                }
+                await websocket.send(json.dumps(subscribe_message))
+                logger.info("WebSocket подписка установлена")
                 
                 while True:
                     try:
@@ -354,36 +369,31 @@ async def process_websocket_message(message: str):
     try:
         data = json.loads(message)
         
-        # Проверяем формат сообщения
-        if "params" not in data or "result" not in data["params"]:
-            return
+        if data.get("method") == "logsNotification":
+            result = data.get("params", {}).get("result", {})
+            value = result.get("value", {})
             
-        result = data["params"]["result"]
-        
-        # Проверяем наличие логов
-        if "value" not in result or "logs" not in result["value"]:
-            return
-            
-        logs = result["value"]["logs"]
-        
-        # Обрабатываем каждый лог
-        for log in logs:
-            if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
-                pool_data = await get_pool_data_from_log(log)
-                if pool_data and filter_pool(pool_data):
-                    message = format_pool_message(pool_data)
-                    if message:
-                        await application.bot.send_message(
-                            chat_id=USER_ID,
-                            text=message,
-                            parse_mode="Markdown",
-                            disable_web_page_preview=True
-                        )
-                        
+            if "logs" in value and not value.get("err"):
+                await process_transaction_logs(value["logs"])
+                
     except json.JSONDecodeError:
-        logger.error("Ошибка декодирования JSON сообщения")
+        logger.error("Ошибка декодирования JSON")
     except Exception as e:
-        logger.error(f"Ошибка обработки websocket сообщения: {e}")
+        logger.error(f"Ошибка обработки сообщения: {e}")
+
+async def unsubscribe_websocket(websocket):
+    """Отписывается от WebSocket подписки"""
+    try:
+        unsubscribe_message = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "logsUnsubscribe",
+            "params": [0]
+        }
+        await websocket.send(json.dumps(unsubscribe_message))
+        logger.info("Успешная отписка от WebSocket")
+    except Exception as e:
+        logger.error(f"Ошибка отписки от WebSocket: {e}")
 
 # Инициализация Quart приложения
 app = Quart(__name__)
