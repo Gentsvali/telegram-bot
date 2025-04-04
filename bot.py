@@ -372,12 +372,19 @@ async def unsubscribe_websocket(websocket):
         logger.error(f"Ошибка отписки от WebSocket: {e}")
 
 async def process_transaction_logs(logs: List[str]):
+    """Обработка логов транзакций с улучшенной фильтрацией"""
     try:
+        meteora_logs = []
         for log in logs:
-            # Ищем только логи от программы Meteora DLMM
+            # Фильтруем только логи от программы Meteora DLMM
             if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
-                # Проверяем, содержит ли лог информацию о пуле
-                if "Instruction: Initialize" in log or "Instruction: Swap" in log:
+                meteora_logs.append(log)
+                logger.info(f"Найден лог Meteora: {log}")
+                
+        if meteora_logs:
+            # Если нашли логи Meteora, обрабатываем их
+            for log in meteora_logs:
+                if any(x in log for x in ["Initialize", "Swap", "UpdatePool"]):
                     pool_data = await get_pool_data_from_log(log)
                     if pool_data and filter_pool(pool_data):
                         message = format_pool_message(pool_data)
@@ -387,20 +394,26 @@ async def process_transaction_logs(logs: List[str]):
                                 text=message,
                                 parse_mode="Markdown"
                             )
+                            logger.info(f"Отправлено сообщение о пуле")
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
 
 async def process_websocket_message(message: str):
+    """Обрабатывает входящие WebSocket сообщения"""
     try:
         data = json.loads(message)
-        logger.info(f"Получено WebSocket сообщение: {data}")  # Добавляем логирование
         
+        # Проверяем, что это уведомление о логах
         if data.get("method") == "logsNotification":
             result = data.get("params", {}).get("result", {})
             value = result.get("value", {})
             
-            if "logs" in value and not value.get("err"):
-                logger.info(f"Обрабатываем логи: {value['logs']}")  # Добавляем логирование
+            if "logs" in value:
+                if value.get("err"):
+                    logger.debug(f"Транзакция с ошибкой: {value['err']}")
+                    return
+                    
+                logger.info(f"Обрабатываем логи: {value['logs']}")
                 await process_transaction_logs(value["logs"])
                 
     except json.JSONDecodeError:
