@@ -88,6 +88,21 @@ solana_client = AsyncClient(HELIUS_RPC_URL, commitment="confirmed")
 # Добавьте новую константу для WebSocket
 WS_RECONNECT_TIMEOUT = 30  # секунды между попытками переподключения
 
+# В начале файла, рядом с другими константами
+WEBSOCKET_SUBSCRIBE_MSG = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "logsSubscribe",
+    "params": [
+        {
+            "mentions": ["LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"]
+        },
+        {
+            "commitment": "confirmed"
+        }
+    ]
+}
+
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
@@ -311,7 +326,7 @@ async def maintain_websocket_connection():
         try:
             async with websockets.connect(HELIUS_WS_URL) as websocket:
                 # Отправляем подписку
-                await websocket.send(json.dumps(subscribe_message))
+                await websocket.send(json.dumps(WEBSOCKET_SUBSCRIBE_MSG))
                 
                 while True:
                     try:
