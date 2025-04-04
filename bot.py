@@ -371,13 +371,41 @@ async def unsubscribe_websocket(websocket):
         logger.error(f"Ошибка отписки от WebSocket: {e}")
 
 async def process_transaction_logs(logs: List[str]):
+    """Обработка логов транзакций с улучшенной фильтрацией"""
     try:
+        # Фильтруем только логи Meteora DLMM
+        meteora_logs = []
+        instruction_type = None
+        pool_data = {}
+        
         for log in logs:
-            if "Instruction: InitializeMint" in log or "Instruction: MintTo" in log:
-                # Обработка создания нового пула
-                logger.info(f"Найден новый DLMM пул: {log}")
-                # Отправка уведомления
-                await send_notification(log)
+            # Ищем только логи программы Meteora DLMM
+            if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
+                if "Program log: Instruction:" in log:
+                    instruction_type = log.split("Instruction: ")[-1].strip()
+                    
+                    # Обрабатываем только нужные инструкции
+                    if instruction_type in ["Initialize", "Swap"]:
+                        meteora_logs.append(log)
+                        logger.info(f"Найдена инструкция Meteora: {instruction_type}")
+                
+                # Ищем данные пула
+                elif "Program data:" in log:
+                    try:
+                        data = log.split("Program data: ")[-1].strip()
+                        # Здесь можно добавить парсинг данных пула
+                        pool_data = decode_pool_data(data)
+                        if pool_data and filter_pool(pool_data):
+                            message = format_pool_message(pool_data)
+                            if message:
+                                await application.bot.send_message(
+                                    chat_id=USER_ID,
+                                    text=message,
+                                    parse_mode="Markdown"
+                                )
+                    except Exception as e:
+                        logger.error(f"Ошибка парсинга данных пула: {e}")
+
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
 
