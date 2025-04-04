@@ -374,27 +374,30 @@ async def unsubscribe_websocket(websocket):
 async def process_transaction_logs(logs: List[str]):
     """Обработка логов транзакций с улучшенной фильтрацией"""
     try:
-        meteora_logs = []
+        # Ищем логи инициализации или обновления пула
+        pool_logs = []
         for log in logs:
-            # Фильтруем только логи от программы Meteora DLMM
             if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
-                meteora_logs.append(log)
-                logger.info(f"Найден лог Meteora: {log}")
-                
-        if meteora_logs:
-            # Если нашли логи Meteora, обрабатываем их
-            for log in meteora_logs:
-                if any(x in log for x in ["Initialize", "Swap", "UpdatePool"]):
-                    pool_data = await get_pool_data_from_log(log)
-                    if pool_data and filter_pool(pool_data):
-                        message = format_pool_message(pool_data)
-                        if message:
-                            await application.bot.send_message(
-                                chat_id=USER_ID,
-                                text=message,
-                                parse_mode="Markdown"
-                            )
-                            logger.info(f"Отправлено сообщение о пуле")
+                if "Instruction: Initialize" in log:
+                    logger.info("Найдена инициализация нового пула")
+                    pool_logs.append(log)
+                elif "Instruction: UpdatePool" in log:
+                    logger.info("Найдено обновление пула")
+                    pool_logs.append(log)
+                    
+        if pool_logs:
+            for log in pool_logs:
+                pool_data = await get_pool_data_from_log(log)
+                if pool_data and filter_pool(pool_data):
+                    message = format_pool_message(pool_data)
+                    if message:
+                        await application.bot.send_message(
+                            chat_id=USER_ID,
+                            text=message,
+                            parse_mode="Markdown"
+                        )
+                        logger.info(f"Отправлено уведомление о пуле")
+                        
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
 
