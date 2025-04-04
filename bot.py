@@ -81,7 +81,6 @@ if missing_vars:
 
 # Настройки Solana
 COMMITMENT = "confirmed"
-DLMM_PROGRAM_ID = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # Meteora DLMM Program ID
 # Инициализация Solana клиента
 solana_client = AsyncClient(HELIUS_RPC_URL, commitment="confirmed")
 
@@ -496,7 +495,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/filters - текущие настройки\n" 
             "/setfilter - изменить параметры\n"
             "/checkpools - проверить сейчас\n"
-            "/help - справка по командам"
         )
         logger.info(f"Пользователь {update.effective_user.id} запустил бота")
     except Exception as e:
@@ -1144,16 +1142,6 @@ def format_pool_message(pool: dict) -> str:
         logger.error(f"Непредвиденная ошибка при форматировании пула {pool.get('address', 'N/A')}: {e}", exc_info=True)
         return None
 
-# 2. Исправляем функцию check_new_pools
-async def check_new_pools(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /checkpools"""
-    try:
-        await track_dlmm_pools()
-        await update.message.reply_text("✅ Проверка пулов запущена")
-    except Exception as e:
-        logger.error(f"Ошибка проверки пулов: {e}")
-        await update.message.reply_text("❌ Ошибка при проверке пулов")
-
 def setup_command_handlers(application: ApplicationBuilder):
     """
     Настраивает обработчики команд для бота с группировкой по функциональности.
@@ -1193,13 +1181,6 @@ def setup_command_handlers(application: ApplicationBuilder):
         for handler in filter_handlers:
             application.add_handler(handler)
 
-        # Команды мониторинга
-        application.add_handler(
-            CommandHandler(
-                "checkpools", 
-                check_new_pools,
-                filters=filters.User(user_id=USER_ID)
-            )
         )  # <-- Исправлено здесь
 
         logger.info("✅ Обработчики команд успешно зарегистрированы")
@@ -1221,7 +1202,6 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/filters - показать текущие фильтры\n"
         "/setfilter - установить фильтр\n"
         "/getfiltersjson - получить фильтры в JSON\n"
-        "/checkpools - проверить пулы"
     )
 
 # Инициализация обработчиков
