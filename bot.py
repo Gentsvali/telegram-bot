@@ -26,6 +26,8 @@ from telegram.ext import (
 )
 
 # Solana импорты
+from solana.rpc.filter import Memcmp, RpcFilterType
+from solana.rpc.config import RpcProgramAccountsConfig
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 import base58
@@ -286,34 +288,30 @@ async def get_pool_accounts():
             
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Добавляем фильтры для уменьшения количества данных
+        # Правильная структура фильтров согласно документации
         filters = [
-            {"dataSize": 165},  # Размер аккаунта
+            RpcFilterType.DataSize(165),  # Фиксированный размер аккаунта
+            RpcFilterType.Memcmp(Memcmp.new(
+                offset=0,
+                bytes=program_id.to_bytes()
+            ))
         ]
+
+        config = RpcProgramAccountsConfig(
+            filters=filters,
+            encoding="base64"
+        )
         
         response = await client.get_program_accounts(
             program_id,
-            encoding="base64",
-            filters=filters  # Добавляем фильтры
+            config
         )
-        
+
         if not response:
             logger.warning("Не получено ни одного аккаунта")
             return None
 
-        # Проверяем структуру данных перед обработкой
-        valid_accounts = []
-        for acc in response:
-            try:
-                if hasattr(acc, 'account') and hasattr(acc.account, 'data'):
-                    valid_accounts.append(acc)
-                else:
-                    logger.warning(f"Пропущен аккаунт с неверной структурой: {acc}")
-            except Exception as e:
-                logger.warning(f"Ошибка проверки аккаунта: {e}")
-                continue
-
-        return valid_accounts if valid_accounts else None
+        return response
 
     except Exception as e:
         logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
