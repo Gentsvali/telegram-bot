@@ -282,19 +282,21 @@ application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
     try:
-        # Настройка конфигурации согласно документации
-        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-        
-        # Простая конфигурация для начала тестирования
+        # Создаем правильный объект MemcmpOpts для фильтра
+        memcmp = MemcmpOpts(
+            offset=32,  # смещение в байтах
+            bytes="LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # адрес в формате base58
+        )
+
+        # Создаем фильтры
         filters = [
-            {
-                "dataSize": DLMM_CONFIG["pool_size"]  # Используем размер из конфигурации
-            }
+            {"dataSize": DLMM_CONFIG["pool_size"]},  # размер в байтах
+            memcmp  # используем объект MemcmpOpts вместо словаря
         ]
-        
-        # Создаем запрос с минимальной конфигурацией
+
+        # Вызываем RPC метод
         response = await solana_client.get_program_accounts(
-            program_id, 
+            Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"),
             encoding="base64",
             filters=filters
         )
@@ -304,6 +306,8 @@ async def get_pool_accounts():
         logger.debug(f"Вызов get_program_accounts с параметрами:")
         logger.debug(f"program_id: {program_id}")
         logger.debug(f"filters: {filters}")
+        logger.debug(f"Созданный memcmp объект: {memcmp}")
+        logger.debug(f"Фильтры: {filters}")
 
         return response
         
