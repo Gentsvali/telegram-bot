@@ -285,43 +285,20 @@ application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
     try:
-        # Создаем конфигурацию согласно документации
-        config = {
-            "encoding": "jsonParsed",
-            "filters": [
-                {
-                    "dataSize": 165  # Размер токен-аккаунта
-                }
-            ],
-            "commitment": "confirmed"
-        }
-
-        # Получаем аккаунты программы
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-        
-        # Добавляем логирование
-        logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
         response = await solana_client.get_program_accounts(
             program_id,
-            **config
+            encoding="jsonParsed",
+            commitment="confirmed"
         )
         
-        # Добавляем логирование для отладки
-        logger.debug(f"Получен ответ от RPC: {response}")
-        logger.debug(f"Вызов get_program_accounts с параметрами:")
-        logger.debug(f"program_id: {program_id}")
-        logger.debug(f"filters: {filters}")
-        logger.debug(f"Созданный memcmp объект: {memcmp}")
-        logger.debug(f"Фильтры: {filters}")
-
+        logger.debug(f"Получен ответ: {response}")
         return response
-        
+
     except Exception as e:
-        # Расширенное логирование ошибки
         logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
         return None
-
 
 # Инициализация Quart приложения
 app = Quart(__name__)
