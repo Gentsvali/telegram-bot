@@ -54,7 +54,7 @@ COMMITMENT = Confirmed
 METEORA_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 
 # Инициализация Solana клиента
-solana_client = AsyncClient(HELIUS_RPC_URL, commitment=COMMITMENT)
+solana_client = AsyncClient("https://api.mainnet-beta.solana.com", "confirmed") [(1)](https://solana.com/developers/guides/javascript/get-program-accounts)
 
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -116,23 +116,36 @@ async def init_solana() -> bool:
         return False
 
 async def get_pool_accounts():
-    """Получает аккаунты пулов с оптимизированными фильтрами"""
     try:
+        # Use proper filter structure according to documentation
         filters = [
-            {"dataSize": 752},  # Размер данных DLMM пула
+            {"dataSize": 752}  # Size of DLMM pool data [(1)](https://solana.com/developers/guides/javascript/get-program-accounts)
         ]
         
         response = await solana_client.get_program_accounts(
             METEORA_PROGRAM_ID,
             encoding="base64",
-            commitment=COMMITMENT,
+            commitment="confirmed",
             filters=filters
-        )
+        ) [(1)](https://solana.com/developers/guides/javascript/get-program-accounts)
         
-        return response.value if response else None
-        
+        if response and response.value:
+            for account in response.value:
+                pool_data = decode_pool_data(account.account.data)
+                if pool_data and filter_pool(pool_data):
+                    message = format_pool_message(pool_data)
+                    if message:
+                        await application.bot.send_message(
+                            chat_id=USER_ID,
+                            text=message,
+                            parse_mode="Markdown",
+                            disable_web_page_preview=True
+                        )
+                        
+        await asyncio.sleep(300)  # Check every 5 minutes
+                
     except Exception as e:
-        logger.error(f"Ошибка получения аккаунтов: {e}")
+        logger.error(f"Error getting pool accounts: {e}")
         return None
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
