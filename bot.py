@@ -280,114 +280,30 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Регистрируем обработчик ошибок
 application.add_error_handler(error_handler)
 
-async def handle_websocket_connection():
-    """Обработчик WebSocket подключения с улучшенной обработкой ошибок"""
-    while True:
-        try:
-            async with websockets.connect(HELIUS_WS_URL) as websocket:
-                # Отправляем запрос на подписку с параметром confirmed для скорости
-                subscribe_message = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "logsSubscribe",
-                    "params": [
-                        {
-                            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
-                        },
-                        {
-                            "commitment": "confirmed"  # Используем confirmed для скорости [(1)](https://solana.stackexchange.com/questions/18574/speed-up-websocket-connection)
-                        }
-                    ]
-                }
-                
-                await websocket.send(json.dumps(subscribe_message))
-                logger.info("✅ WebSocket подписка установлена")
-
-                # Бесконечный цикл обработки сообщений
-                while True:
-                    try:
-                        await handle_websocket_message(websocket)
-                    except websockets.exceptions.ConnectionClosed:
-                        raise
-                    except Exception as e:
-                        logger.error(f"Ошибка в цикле обработки: {e}")
-                        continue
-
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("WebSocket соединение закрыто, переподключение...")
-            await asyncio.sleep(WS_RECONNECT_TIMEOUT)
-        except Exception as e:
-            logger.error(f"Ошибка WebSocket соединения: {e}")
-            await asyncio.sleep(WS_RECONNECT_TIMEOUT)
-
-async def maintain_websocket_connection():
-    """Поддерживает WebSocket подключение с правильной обработкой подписки"""
-    while True:
-        try:
-            async with websockets.connect(HELIUS_WS_URL) as websocket:
-                # Правильный формат подписки согласно документации
-                subscribe_message = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "logsSubscribe",
-                    "params": [
-                        {
-                            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
-                        },
-                        {
-                            "commitment": "confirmed",
-                            "encoding": "jsonParsed"
-                        }
-                    ]
-                }
-                
-                await websocket.send(json.dumps(subscribe_message))
-                logger.info("✅ WebSocket подписка установлена")
-                
-                # Запускаем ping/pong для поддержания соединения
-                ping_task = asyncio.create_task(keep_alive(websocket))
-                
-                try:
-                    while True:
-                        message = await websocket.recv()
-                        await process_websocket_message(message)
-                except Exception as e:
-                    logger.error(f"Ошибка в основном цикле websocket: {e}")
-                    ping_task.cancel()
-                    raise
-                    
-        except Exception as e:
-            logger.error(f"Ошибка websocket соединения: {e}")
-            await asyncio.sleep(WS_RECONNECT_TIMEOUT)
-
-async def keep_alive(websocket):
-    while True:
-        try:
-            ping_message = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "ping"
-            }
-            await websocket.send(json.dumps(ping_message))
-            await asyncio.sleep(30)
-        except Exception as e:
-            logger.error(f"Ошибка ping/pong: {e}")
-            break
-
-async def unsubscribe_websocket(websocket):
-    """Отписывается от WebSocket подписки согласно документации"""
+async def get_pool_accounts():
     try:
-        unsubscribe_message = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "logsUnsubscribe",
-            "params": [0]
-        }
-        
-        await websocket.send(json.dumps(unsubscribe_message))
-        logger.info("✅ Успешная отписка от WebSocket")
+        filters = [
+            {
+                "dataSize": 165  # размер данных пула
+            },
+            {
+                "memcmp": {
+                    "offset": 32,  # смещение для поиска
+                    "bytes": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+                }
+            }
+        ]
+
+        accounts = await solana_client.get_program_accounts(
+            Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"),
+            filters=filters,
+            encoding="base64"
+        )
+
+        return accounts
     except Exception as e:
-        logger.error(f"Ошибка отписки от WebSocket: {e}")
+        logger.error(f"Ошибка получения аккаунтов: {e}")
+        return None
 
 async def process_transaction_logs(logs: List[str]):
     """Обработка логов транзакций с фокусом на Meteora"""
@@ -425,34 +341,6 @@ async def process_transaction_logs(logs: List[str]):
                             
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
-
-async def process_websocket_message(message: str):
-    """Обрабатывает входящие WebSocket сообщения согласно документации Solana"""
-    try:
-        data = json.loads(message)
-        
-        # Проверяем формат уведомления согласно документации
-        if data.get("method") == "logsNotification":
-            result = data.get("params", {}).get("result", {})
-            value = result.get("value", {})
-            
-            if "logs" in value:
-                if value.get("err"):
-                    logger.debug(f"Транзакция с ошибкой: {value['err']}")
-                    return
-                
-                signature = value.get("signature")
-                if signature:
-                    logger.info(f"Обрабатываем транзакцию: {signature}")
-                
-                logs = value["logs"]
-                logger.info(f"Обрабатываем логи: {logs}")
-                await process_transaction_logs(logs)
-                
-    except json.JSONDecodeError:
-        logger.error("Ошибка декодирования JSON сообщения")
-    except Exception as e:
-        logger.error(f"Ошибка обработки websocket сообщения: {e}")
 
 # Инициализация Quart приложения
 app = Quart(__name__)
@@ -636,6 +524,26 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
 
+async def monitor_pools():
+    while True:
+        try:
+            accounts = await get_pool_accounts()
+            if accounts:
+                for acc in accounts:
+                    pool_data = decode_pool_data(acc.account.data)
+                    if pool_data and filter_pool(pool_data):
+                        message = format_pool_message(pool_data)
+                        if message:
+                            await application.bot.send_message(
+                                chat_id=USER_ID,
+                                text=message,
+                                parse_mode="Markdown"
+                            )
+            await asyncio.sleep(60)  # Проверяем каждую минуту
+        except Exception as e:
+            logger.error(f"Ошибка мониторинга: {e}")
+            await asyncio.sleep(60)
+
 async def get_pool_data_from_log(log: str) -> Optional[dict]:
     """Извлекает данные пула из лога транзакции"""
     try:
@@ -677,50 +585,19 @@ async def get_pool_data_from_log(log: str) -> Optional[dict]:
         logger.error(f"Ошибка обработки лога: {e}")
         return None
 
-def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
-    """Улучшенная версия с сохранением вашей логики"""
+def decode_pool_data(data: bytes) -> dict:
     try:
-        # Конвертируем в bytes если нужно
-        if isinstance(data, str):
-            data = base64.b64decode(data)
-        elif not isinstance(data, bytes):
-            raise ValueError(f"Неподдерживаемый тип данных: {type(data)}")
-
-        # Ваша оригинальная логика декодирования
-        if len(data) < DLMM_CONFIG["pool_size"]:
-            logger.error(f"Некорректный размер данных: {len(data)} байт")
-            return None
-            
-        decoded_data = {
+        return {
             "mint_x": base58.b58encode(data[:32]).decode(),
             "mint_y": base58.b58encode(data[32:64]).decode(),
             "liquidity": int.from_bytes(data[64:72], "little"),
-            "volume_1h": int.from_bytes(data[72:80], byteorder="little"),                                                                                                                                                        
-            "volume_5m": int.from_bytes(data[80:88], byteorder="little"),
-            
-            # Параметры пула
-            "bin_step": int.from_bytes(data[88:90], byteorder="little"),
-            "base_fee": int.from_bytes(data[90:92], byteorder="little") / 10000,  # Конвертируем в проценты
-            
-            # Расчетные показатели
-            "fee_tvl_ratio_24h": int.from_bytes(data[92:100], byteorder="little") / 10000,
-            "dynamic_fee_tvl_ratio": int.from_bytes(data[100:108], byteorder="little") / 10000,
-            
-            # Конвертируем значения в SOL
-            "tvl_sol": int.from_bytes(data[64:72], byteorder="little") / 1e9,
-            "volume_1h_sol": int.from_bytes(data[72:80], byteorder="little") / 1e9,
-            "volume_5m_sol": int.from_bytes(data[80:88], byteorder="little") / 1e9,
+            "bin_step": int.from_bytes(data[88:90], "little"),
+            "base_fee": int.from_bytes(data[90:92], "little") / 10000,
+            "tvl_sol": int.from_bytes(data[64:72], "little") / 1e9
         }
-
-        # Проверяем валидность декодированных данных
-        if not all(v is not None for v in decoded_data.values()):
-            raise ValueError("Обнаружены пустые значения в декодированных данных")
-
-        return decoded_data
-
     except Exception as e:
-        logger.error(f"Ошибка декодирования данных пула: {e}", exc_info=True)
-        return {}
+        logger.error(f"Ошибка декодирования данных: {e}")
+        return None
 
 async def handle_pool_change(pool_data: bytes):
     """Обработка изменений пула с проверкой структуры данных"""
@@ -1401,21 +1278,8 @@ async def startup_sequence():
 if __name__ == "__main__":
     try:
         if asyncio.run(startup_sequence()):
-            logger.info(f"🚀 Запускаем сервер на порту {PORT}...")
-            
-            # Либо запускаем Quart app, либо мониторинг пулов
-            # Выберите один вариант:
-            
-            # Вариант 1: Запуск Quart сервера
-            app.run(host='0.0.0.0', port=PORT)
-            
-            # ИЛИ Вариант 2: Запуск мониторинга
-            # asyncio.run(monitor_pools())
-            
-        else:
-            logger.error("❌ Ошибка при запуске приложения")
-            sys.exit(1)
-            
+            logger.info(f"🚀 Запускаем мониторинг пулов...")
+            asyncio.run(monitor_pools())
     except Exception as e:
         logger.error(f"💥 Критическая ошибка: {e}")
         sys.exit(1)
