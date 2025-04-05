@@ -339,7 +339,7 @@ async def maintain_websocket_connection():
                             "encoding": "jsonParsed"
                         }
                     ]
-                }[(1)](https://solana.com/docs/rpc/websocket/logssubscribe)
+                }
                 
                 await websocket.send(json.dumps(subscribe_message))
                 logger.info("✅ WebSocket подписка установлена")
@@ -382,7 +382,7 @@ async def unsubscribe_websocket(websocket):
             "id": 1,
             "method": "logsUnsubscribe",
             "params": [0]
-        }[(1)](https://solana.com/docs/rpc/websocket/logssubscribe)
+        }
         
         await websocket.send(json.dumps(unsubscribe_message))
         logger.info("✅ Успешная отписка от WebSocket")
