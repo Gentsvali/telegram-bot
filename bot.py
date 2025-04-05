@@ -285,23 +285,26 @@ application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
     try:
-        # Создаем правильный объект MemcmpOpts для фильтра
-        memcmp = MemcmpOpts(
-            offset=32,  # смещение в байтах
-            bytes="LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # адрес в формате base58
-        )
+        # Создаем конфигурацию согласно документации
+        config = {
+            "encoding": "jsonParsed",
+            "filters": [
+                {
+                    "dataSize": 165  # Размер токен-аккаунта
+                }
+            ],
+            "commitment": "confirmed"
+        }
 
-        # Создаем фильтры
-        filters = [
-            {"dataSize": DLMM_CONFIG["pool_size"]},  # размер в байтах
-            memcmp  # используем объект MemcmpOpts вместо словаря
-        ]
-
-        # Вызываем RPC метод
+        # Получаем аккаунты программы
+        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+        
+        # Добавляем логирование
+        logger.debug(f"Отправка запроса с конфигурацией: {config}")
+        
         response = await solana_client.get_program_accounts(
-            Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"),
-            encoding="base64",
-            filters=filters
+            program_id,
+            **config
         )
         
         # Добавляем логирование для отладки
