@@ -390,47 +390,43 @@ async def unsubscribe_websocket(websocket):
         logger.error(f"Ошибка отписки от WebSocket: {e}")
 
 async def process_transaction_logs(logs: List[str]):
-    """Обработка логов транзакций с улучшенной фильтрацией"""
+    """Обработка логов транзакций Meteora"""
     try:
         meteora_logs = []
         instruction_type = None
         pool_address = None
         
+        # Ищем только логи от программы Meteora
         for log in logs:
-            # Ищем только важные инструкции Meteora
+            # Проверяем, что это лог от программы Meteora
             if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
+                meteora_logs.append(log)
+                
+                # Ищем тип инструкции
                 if "Program log: Instruction:" in log:
                     instruction_type = log.split("Instruction: ")[-1].strip()
                     logger.info(f"Найдена инструкция Meteora: {instruction_type}")
                     
-                # Собираем данные о пуле
-                if instruction_type in ["Initialize", "UpdatePool"]:
-                    meteora_logs.append(log)
+                # Если это Swap инструкция, обрабатываем ее
+                if instruction_type == "Swap":
+                    logger.info("Обнаружен своп в пуле Meteora")
                     
-                # Ищем адрес пула в логах программы
-                if "Program data:" in log:
-                    try:
-                        data = log.split("Program data: ")[-1].strip()
-                        # Здесь можно добавить парсинг данных пула
-                        logger.info(f"Найдены данные пула: {data[:100]}...")
-                    except Exception as e:
-                        logger.error(f"Ошибка парсинга данных пула: {e}")
-                        
-        if meteora_logs:
-            logger.info(f"Найдено {len(meteora_logs)} важных логов Meteora")
-            # Обработка данных пула
-            if pool_address:
-                pool_data = await get_pool_data_from_log("\n".join(meteora_logs))
-                if pool_data and filter_pool(pool_data):
-                    message = format_pool_message(pool_data)
-                    if message:
-                        await application.bot.send_message(
-                            chat_id=USER_ID,
-                            text=message,
-                            parse_mode="Markdown"
-                        )
-                        logger.info("Отправлено уведомление о пуле")
-                        
+                    # Ищем данные пула в следующих логах
+                    for next_log in meteora_logs:
+                        if "Program data:" in next_log:
+                            data = next_log.split("Program data: ")[-1].strip()
+                            pool_data = await get_pool_data_from_log(data)
+                            if pool_data and filter_pool(pool_data):
+                                message = format_pool_message(pool_data)
+                                if message:
+                                    await application.bot.send_message(
+                                        chat_id=USER_ID,
+                                        text=message,
+                                        parse_mode="Markdown"
+                                    )
+                                    logger.info("Отправлено уведомление о пуле")
+                            break
+
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
 
