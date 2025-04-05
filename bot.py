@@ -92,6 +92,7 @@ RPC_ENDPOINTS = [
 COMMITMENT = "confirmed"
 # Инициализация Solana клиента
 solana_clients = [AsyncClient(url, commitment=COMMITMENT) for url in RPC_ENDPOINTS]
+solana_client = solana_clients[0]
 
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -161,6 +162,7 @@ application = (
 )
 
 async def get_working_client():
+    """Получает работающий RPC клиент"""
     for client in solana_clients:
         try:
             await client.get_version()
@@ -216,24 +218,19 @@ async def load_filters(app=None):
 async def init_solana() -> bool:
     """Универсальная проверка подключения к Solana"""
     try:
-        response = await solana_client.get_version()
-        
-        # Обработка для новых версий solana-py (solders)
+        client = await get_working_client()
+        if not client:
+            logger.error("❌ Нет доступных RPC клиентов")
+            return False
+            
+        response = await client.get_version()
         if hasattr(response, 'value'):
             version_info = response.value
             version = getattr(version_info, 'solana_core', None) or getattr(version_info, 'version', 'unknown')
             logger.info(f"✅ Подключено к Solana (v{version})")
             return True
             
-        # Обработка для старых версий
-        if hasattr(response, 'to_json'):
-            version_data = json.loads(response.to_json())
-            version = version_data.get('result', {}).get('version', 'unknown')
-            logger.info(f"✅ Подключено к Solana (v{version})")
-            return True
-            
-        # Если ответ в неожиданном формате
-        logger.error(f"Неподдерживаемый формат ответа RPC: {type(response)}")
+        logger.error(f"❌ Неподдерживаемый формат ответа RPC: {type(response)}")
         return False
         
     except Exception as e:
