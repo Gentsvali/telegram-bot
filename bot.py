@@ -110,14 +110,6 @@ DEFAULT_FILTERS = {
     "dynamic_fee_tvl_ratio_min": 0.5,  # Минимальное отношение динамической комиссии к TVL (в %)
 }
 
-# Константы для работы с DLMM
-DLMM_CONFIG = {
-    "update_interval": 300,  # 5 минут между обновлениями
-    "pool_size": 165,  # Размер данных пула в байтах
-    "commitment": "confirmed",  # Уровень подтверждения транзакций
-    "retry_delay": 120,  # Задержка перед повторной попыткой при ошибке (в секундах)
-}
-
 # Проверка корректности фильтров
 def validate_filters(filters: dict) -> bool:
     """
@@ -161,10 +153,16 @@ application = (
     .build()
 )
 
+# Настройки клиента
+TIMEOUT = 60  # Увеличиваем таймаут до 60 секунд
+RETRIES = 3   # Количество попыток
+
 async def get_working_client():
-    """Получает работающий RPC клиент"""
+    """Получает работающий RPC клиент с увеличенным таймаутом"""
     for client in solana_clients:
         try:
+            # Создаем клиент с увеличенным таймаутом
+            client._provider.session.timeout = TIMEOUT
             await client.get_version()
             return client
         except Exception as e:
@@ -279,38 +277,39 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
-    try:
-        client = await get_working_client()
-        if not client:
-            raise Exception("Нет доступных RPC клиентов")
+    """Получает аккаунты пулов с повторными попытками"""
+    for attempt in range(RETRIES):
+        try:
+            client = await get_working_client()
+            if not client:
+                raise Exception("Нет доступных RPC клиентов")
+                
+            program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
             
-        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-        
-        response = await client.get_program_accounts(
-            program_id,
-            encoding="base64"  # Используем только базовые параметры
-        )
+            response = await client.get_program_accounts(
+                program_id,
+                encoding="base64",
+                commitment="confirmed"  # Используем confirmed для более быстрого ответа
+            )
 
-        if not response:
-            logger.warning("Не получено ни одного аккаунта")
-            return None
-
-        return response
-
-    except Exception as e:
-        logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
-        await asyncio.sleep(5)
-        return None
+            if response:
+                return response
+            logger.warning(f"Попытка {attempt + 1}/{RETRIES}: Не получено аккаунтов")
+            
+        except Exception as e:
+            logger.error(f"Попытка {attempt + 1}/{RETRIES}: Ошибка получения аккаунтов: {str(e)}")
+            if attempt < RETRIES - 1:
+                await asyncio.sleep(5 * (attempt + 1))  # Увеличиваем задержку с каждой попыткой
+            continue
+            
+    return None
 
 async def monitor_pools():
-    retry_count = 0
-    max_retries = 3
-    
+    """Мониторинг пулов с обработкой ошибок"""
     while True:
         try:
             accounts = await get_pool_accounts()
             if accounts:
-                retry_count = 0  # Сбрасываем счетчик при успехе
                 for acc in accounts:
                     try:
                         pool_data = decode_pool_data(acc.account.data)
@@ -325,19 +324,12 @@ async def monitor_pools():
                     except Exception as e:
                         logger.debug(f"Пропуск аккаунта из-за ошибки: {e}")
                         continue
-            
+                        
             await asyncio.sleep(300)  # 5 минут между запросами
             
         except Exception as e:
             logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
-            retry_count += 1
-            
-            if retry_count >= max_retries:
-                logger.error("Превышено количество попыток, ожидаем 5 минут")
-                await asyncio.sleep(300)
-                retry_count = 0
-            else:
-                await asyncio.sleep(60)  # 1 минута между повторными попытками
+            await asyncio.sleep(300)
 
 async def check_connection():
     try:
