@@ -25,6 +25,7 @@ from telegram.ext import (
 )
 
 # Solana импорты
+from solana.rpc.filter import Memcmp 
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 import base58
@@ -269,36 +270,41 @@ async def get_pool_accounts():
     try:
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Строка 322 в solana/rpc/core.py показывает, что фильтры должны быть объектами,
-        # а не словарями. Создаем правильный объект для memcmp:
-        memcmp = MemcmpOpts(
-            offset=32,  # смещение в байтах
-            bytes="LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # адрес в base58
+        # Создаем правильный Memcmp объект
+        memcmp = Memcmp(
+            offset=32,
+            bytes=base58.b58encode(bytes("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo", 'utf-8'))
         )
 
-        # Создаем фильтры как объекты
-        filters = [
-            {"dataSize": 165},  # это может быть словарь
-            memcmp  # это должен быть объект MemcmpOpts
-        ]
-
-        # Отладочное логирование
-        logger.debug(f"Program ID: {program_id}")
-        logger.debug(f"Filters: {filters}")
+        # Создаем конфигурацию согласно документации
+        config = {
+            "encoding": "base64",
+            "filters": [
+                {
+                    "dataSize": DLMM_CONFIG["pool_size"]
+                },
+                memcmp
+            ]
+        }
         
         response = await solana_client.get_program_accounts(
             program_id,
-            encoding="base64",
-            filters=filters,
-            commitment=solana_client.commitment
+            **config
         )
         
-        logger.debug(f"Response: {response}")
         return response
 
     except Exception as e:
         logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
         return None
+
+async def check_connection():
+    try:
+        response = await solana_client.get_version()
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка проверки подключения: {e}")
+        return False
 
 # Инициализация Quart приложения
 app = Quart(__name__)
@@ -485,21 +491,31 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def monitor_pools():
     while True:
         try:
+            logger.debug("Начинаем получение аккаунтов...")
             accounts = await get_pool_accounts()
+            
             if accounts:
+                logger.debug(f"Получено {len(accounts)} аккаунтов")
                 for acc in accounts:
+                    logger.debug(f"Обработка аккаунта: {acc.pubkey}")
                     pool_data = decode_pool_data(acc.account.data)
-                    if pool_data and filter_pool(pool_data):
-                        message = format_pool_message(pool_data)
-                        if message:
-                            await application.bot.send_message(
-                                chat_id=USER_ID,
-                                text=message,
-                                parse_mode="Markdown"
-                            )
-            await asyncio.sleep(60)  # Проверяем каждую минуту
+                    if pool_data:
+                        logger.debug(f"Данные пула: {pool_data}")
+                        if filter_pool(pool_data):
+                            message = format_pool_message(pool_data)
+                            if message:
+                                await application.bot.send_message(
+                                    chat_id=USER_ID,
+                                    text=message,
+                                    parse_mode="Markdown"
+                                )
+            else:
+                logger.warning("Не получено ни одного аккаунта")
+                
+            await asyncio.sleep(60)
+            
         except Exception as e:
-            logger.error(f"Ошибка мониторинга: {e}")
+            logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 async def get_pool_data_from_log(log: str) -> Optional[dict]:
