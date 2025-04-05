@@ -342,8 +342,8 @@ async def startup_sequence():
             return False
 
         # 4. Запуск WebSocket мониторинга
-        asyncio.create_task(maintain_websocket_connection())
-        logger.info("🔌 WebSocket мониторинг запущен")
+        asyncio.create_task(monitor_pools())
+        logger.info("🔌 мониторинг запущен")
 
         return True
 
