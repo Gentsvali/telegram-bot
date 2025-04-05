@@ -282,33 +282,36 @@ application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
     try:
+        # Настройка конфигурации согласно документации
+        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+        
+        # Простая конфигурация для начала тестирования
         filters = [
-            {"dataSize": 165},
             {
-                "memcmp": {
-                    "offset": 32,
-                    "bytes": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
-                }
+                "dataSize": DLMM_CONFIG["pool_size"]  # Используем размер из конфигурации
             }
         ]
         
-        config = {
-            "filters": filters,
-            "dataSlice": {
-                "offset": 0,
-                "length": 0
-            }
-        }
-
-        accounts = await solana_client.get_program_accounts(
-            Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"),
-            config
+        # Создаем запрос с минимальной конфигурацией
+        response = await solana_client.get_program_accounts(
+            program_id, 
+            encoding="base64",
+            filters=filters
         )
+        
+        # Добавляем логирование для отладки
+        logger.debug(f"Получен ответ от RPC: {response}")
+        logger.debug(f"Вызов get_program_accounts с параметрами:")
+        logger.debug(f"program_id: {program_id}")
+        logger.debug(f"filters: {filters}")
 
-        return accounts
+        return response
+        
     except Exception as e:
-        logger.error(f"Ошибка получения аккаунтов: {e}")
+        # Расширенное логирование ошибки
+        logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
         return None
+
 
 # Инициализация Quart приложения
 app = Quart(__name__)
