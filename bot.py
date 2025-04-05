@@ -305,43 +305,6 @@ async def get_pool_accounts():
         logger.error(f"Ошибка получения аккаунтов: {e}")
         return None
 
-async def process_transaction_logs(logs: List[str]):
-    """Обработка логов транзакций с фокусом на Meteora"""
-    try:
-        meteora_program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
-        current_instruction = None
-        pool_data = None
-        
-        for log in logs:
-            # Отфильтровываем только логи от программы Meteora
-            if f"Program {meteora_program_id}" in log:
-                # Ищем инструкцию
-                if "Program log: Instruction:" in log:
-                    current_instruction = log.split("Instruction: ")[-1].strip()
-                    logger.info(f"Meteora instruction: {current_instruction}")
-                    
-                # Если это инструкция Swap, начинаем искать данные пула
-                elif current_instruction == "Swap":
-                    # Ищем Program data
-                    if "Program data:" in log:
-                        data = log.split("Program data: ")[-1].strip() [(1)](https://solana.stackexchange.com/questions/13903/whats-program-data-in-the-program-logs-section-of-explorers)
-                        try:
-                            pool_data = await get_pool_data_from_log(data)
-                            if pool_data and filter_pool(pool_data):
-                                message = format_pool_message(pool_data)
-                                if message:
-                                    await application.bot.send_message(
-                                        chat_id=USER_ID,
-                                        text=message,
-                                        parse_mode="Markdown"
-                                    )
-                                    logger.info("Отправлено уведомление о пуле")
-                        except Exception as e:
-                            logger.error(f"Ошибка обработки данных пула: {e}")
-                            
-    except Exception as e:
-        logger.error(f"Ошибка обработки логов: {e}")
-
 # Инициализация Quart приложения
 app = Quart(__name__)
 
