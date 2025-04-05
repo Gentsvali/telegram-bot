@@ -26,7 +26,6 @@ from telegram.ext import (
 )
 
 # Solana импорты
-from solana.rpc.filter import Memcmp, RpcFilterType
 from solana.rpc.config import RpcProgramAccountsConfig
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
@@ -288,17 +287,19 @@ async def get_pool_accounts():
             
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Используем структуру фильтров согласно документации [(1)](https://solana.com/docs/rpc/http/getprogramaccounts)
-        filters = [
-            {
-                "dataSize": 165  # Фиксированный размер аккаунта
-            }
-        ]
+        # Используем configOrCommitment как показано в документации
+        config = {
+            "encoding": "base64",
+            "filters": [
+                {
+                    "dataSize": 165
+                }
+            ]
+        }
         
         response = await client.get_program_accounts(
             program_id,
-            encoding="base64",
-            filters=filters
+            config
         )
 
         if not response:
@@ -309,13 +310,18 @@ async def get_pool_accounts():
 
     except Exception as e:
         logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
+        await asyncio.sleep(5)  # Добавляем задержку при ошибке
         return None
 
 async def monitor_pools():
+    retry_count = 0
+    max_retries = 3
+    
     while True:
         try:
             accounts = await get_pool_accounts()
             if accounts:
+                retry_count = 0  # Сбрасываем счетчик при успехе
                 for acc in accounts:
                     try:
                         pool_data = decode_pool_data(acc.account.data)
@@ -330,13 +336,19 @@ async def monitor_pools():
                     except Exception as e:
                         logger.debug(f"Пропуск аккаунта из-за ошибки: {e}")
                         continue
-                        
-            # Увеличиваем интервал между запросами
+            
             await asyncio.sleep(300)  # 5 минут между запросами
             
         except Exception as e:
             logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
-            await asyncio.sleep(300)
+            retry_count += 1
+            
+            if retry_count >= max_retries:
+                logger.error("Превышено количество попыток, ожидаем 5 минут")
+                await asyncio.sleep(300)
+                retry_count = 0
+            else:
+                await asyncio.sleep(60)  # 1 минута между повторными попытками
 
 async def check_connection():
     try:
