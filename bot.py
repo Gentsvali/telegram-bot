@@ -286,19 +286,9 @@ async def get_pool_accounts():
             
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Используем configOrCommitment как показано в документации
-        config = {
-            "encoding": "base64",
-            "filters": [
-                {
-                    "dataSize": 165
-                }
-            ]
-        }
-        
         response = await client.get_program_accounts(
             program_id,
-            config
+            encoding="base64"  # Используем только базовые параметры
         )
 
         if not response:
@@ -309,7 +299,7 @@ async def get_pool_accounts():
 
     except Exception as e:
         logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
-        await asyncio.sleep(5)  # Добавляем задержку при ошибке
+        await asyncio.sleep(5)
         return None
 
 async def monitor_pools():
