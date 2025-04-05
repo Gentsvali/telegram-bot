@@ -662,44 +662,6 @@ async def get_pool_data_from_log(log: str) -> Optional[dict]:
         logger.error(f"Ошибка обработки лога: {e}")
         return None
 
-async def handle_websocket_message(websocket):
-    """Обработчик входящих WebSocket сообщений"""
-    try:
-        message = await websocket.recv()
-        data = json.loads(message)
-        
-        # Проверяем, что это уведомление о логах
-        if data.get("method") == "logsNotification":  # [(3)](https://solana.com/docs/rpc/websocket/logssubscribe)
-            result = data.get("params", {}).get("result", {})
-            
-            # Получаем значение
-            value = result.get("value", {})
-            
-            # Проверяем наличие логов
-            if "logs" in value and value.get("err") is None:  # [(3)](https://solana.com/docs/rpc/websocket/logssubscribe)
-                await process_transaction_logs(value["logs"])
-                
-    except websockets.exceptions.ConnectionClosed:
-        raise  # Пробрасываем для переподключения
-    except json.JSONDecodeError:
-        logger.error("Ошибка декодирования JSON")
-    except Exception as e:
-        logger.error(f"Ошибка обработки сообщения: {e}")
-
-async def unsubscribe_websocket(websocket):
-    """Отписывается от WebSocket подписки"""
-    try:
-        unsubscribe_message = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "logsUnsubscribe",
-            "params": [0]
-        }
-        await websocket.send(json.dumps(unsubscribe_message))
-        logger.info("Успешная отписка от WebSocket")
-    except Exception as e:
-        logger.error(f"Ошибка отписки от WebSocket: {e}")
-
 def decode_pool_data(data: Union[str, bytes]) -> Optional[dict]:
     """Улучшенная версия с сохранением вашей логики"""
     try:
