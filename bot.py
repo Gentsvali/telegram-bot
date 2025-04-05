@@ -321,13 +321,30 @@ async def handle_websocket_connection():
             await asyncio.sleep(WS_RECONNECT_TIMEOUT)
 
 async def maintain_websocket_connection():
+    """Поддерживает WebSocket подключение с правильной обработкой подписки"""
     while True:
         try:
             async with websockets.connect(HELIUS_WS_URL) as websocket:
-                await websocket.send(json.dumps(WEBSOCKET_SUBSCRIBE_MSG))
-                logger.info("WebSocket подписка установлена")
+                # Правильный формат подписки согласно документации
+                subscribe_message = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "logsSubscribe",
+                    "params": [
+                        {
+                            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
+                        },
+                        {
+                            "commitment": "confirmed",
+                            "encoding": "jsonParsed"
+                        }
+                    ]
+                }[(1)](https://solana.com/docs/rpc/websocket/logssubscribe)
                 
-                # Запускаем ping/pong
+                await websocket.send(json.dumps(subscribe_message))
+                logger.info("✅ WebSocket подписка установлена")
+                
+                # Запускаем ping/pong для поддержания соединения
                 ping_task = asyncio.create_task(keep_alive(websocket))
                 
                 try:
@@ -341,7 +358,7 @@ async def maintain_websocket_connection():
                     
         except Exception as e:
             logger.error(f"Ошибка websocket соединения: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(WS_RECONNECT_TIMEOUT)
 
 async def keep_alive(websocket):
     while True:
@@ -358,16 +375,17 @@ async def keep_alive(websocket):
             break
 
 async def unsubscribe_websocket(websocket):
-    """Отписывается от WebSocket подписки"""
+    """Отписывается от WebSocket подписки согласно документации"""
     try:
         unsubscribe_message = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "logsUnsubscribe",
             "params": [0]
-        }
+        }[(1)](https://solana.com/docs/rpc/websocket/logssubscribe)
+        
         await websocket.send(json.dumps(unsubscribe_message))
-        logger.info("Успешная отписка от WebSocket")
+        logger.info("✅ Успешная отписка от WebSocket")
     except Exception as e:
         logger.error(f"Ошибка отписки от WebSocket: {e}")
 
@@ -417,11 +435,11 @@ async def process_transaction_logs(logs: List[str]):
         logger.error(f"Ошибка обработки логов: {e}")
 
 async def process_websocket_message(message: str):
-    """Обрабатывает входящие WebSocket сообщения"""
+    """Обрабатывает входящие WebSocket сообщения согласно документации Solana"""
     try:
         data = json.loads(message)
         
-        # Проверяем, что это уведомление о логах
+        # Проверяем формат уведомления согласно документации
         if data.get("method") == "logsNotification":
             result = data.get("params", {}).get("result", {})
             value = result.get("value", {})
@@ -430,9 +448,14 @@ async def process_websocket_message(message: str):
                 if value.get("err"):
                     logger.debug(f"Транзакция с ошибкой: {value['err']}")
                     return
-                    
-                logger.info(f"Обрабатываем логи: {value['logs']}")
-                await process_transaction_logs(value["logs"])
+                
+                signature = value.get("signature")
+                if signature:
+                    logger.info(f"Обрабатываем транзакцию: {signature}")
+                
+                logs = value["logs"]
+                logger.info(f"Обрабатываем логи: {logs}")
+                await process_transaction_logs(logs)
                 
     except json.JSONDecodeError:
         logger.error("Ошибка декодирования JSON сообщения")
