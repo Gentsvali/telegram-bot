@@ -288,23 +288,17 @@ async def get_pool_accounts():
             
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Правильная структура фильтров согласно документации
+        # Используем структуру фильтров согласно документации [(1)](https://solana.com/docs/rpc/http/getprogramaccounts)
         filters = [
-            RpcFilterType.DataSize(165),  # Фиксированный размер аккаунта
-            RpcFilterType.Memcmp(Memcmp.new(
-                offset=0,
-                bytes=program_id.to_bytes()
-            ))
+            {
+                "dataSize": 165  # Фиксированный размер аккаунта
+            }
         ]
-
-        config = RpcProgramAccountsConfig(
-            filters=filters,
-            encoding="base64"
-        )
         
         response = await client.get_program_accounts(
             program_id,
-            config
+            encoding="base64",
+            filters=filters
         )
 
         if not response:
