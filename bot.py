@@ -25,13 +25,10 @@ from telegram.ext import (
 )
 
 # Solana импорты
-from solana.rpc.filter import Memcmp 
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 import base58
 import base64
-import websockets  # Добавляем websockets
-from solana.rpc.types import MemcmpOpts
 from solana.rpc.commitment import Confirmed
 from base58 import b58encode
 
@@ -270,7 +267,7 @@ async def get_pool_accounts():
     try:
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Создаем конфигурацию согласно документации
+        # Используем простую конфигурацию согласно документации
         config = {
             "encoding": "base64",
             "filters": [
@@ -280,7 +277,6 @@ async def get_pool_accounts():
             ]
         }
         
-        # Добавляем логирование
         logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
         response = await solana_client.get_program_accounts(
