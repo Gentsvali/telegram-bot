@@ -87,24 +87,6 @@ COMMITMENT = "confirmed"
 # Инициализация Solana клиента
 solana_client = AsyncClient(HELIUS_RPC_URL, commitment="confirmed")
 
-# Добавьте новую константу для WebSocket
-WS_RECONNECT_TIMEOUT = 30  # секунды между попытками переподключения
-
-# В начале файла, рядом с другими константами
-WEBSOCKET_SUBSCRIBE_MSG = {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "logsSubscribe",
-    "params": [
-        {
-            "mentions": [ "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" ]
-        },
-        {
-            "commitment": "confirmed",
-            "encoding": "jsonParsed"  # Добавляем для получения расшифрованных данных
-        }
-    ]
-}
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
@@ -287,13 +269,18 @@ async def get_pool_accounts():
     try:
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        response = await solana_client.get_program_accounts(
-            program_id,
-            encoding="jsonParsed",
-            commitment="confirmed"
+        # Используем тот же уровень commitment что и в клиенте
+        args = filter_to_args(
+            encoding="base64",
+            data_size=165,
+            commitment=solana_client.commitment  # Берем из клиента
         )
         
-        logger.debug(f"Получен ответ: {response}")
+        response = await solana_client.get_program_accounts(
+            program_id,
+            **args
+        )
+        
         return response
 
     except Exception as e:
