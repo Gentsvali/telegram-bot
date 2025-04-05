@@ -390,31 +390,26 @@ async def unsubscribe_websocket(websocket):
         logger.error(f"Ошибка отписки от WebSocket: {e}")
 
 async def process_transaction_logs(logs: List[str]):
-    """Обработка логов транзакций Meteora"""
+    """Обработка логов транзакций с фокусом на Meteora"""
     try:
-        meteora_logs = []
-        instruction_type = None
-        pool_address = None
+        meteora_program_id = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+        current_instruction = None
+        pool_data = None
         
-        # Ищем только логи от программы Meteora
         for log in logs:
-            # Проверяем, что это лог от программы Meteora
-            if "Program LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo" in log:
-                meteora_logs.append(log)
-                
-                # Ищем тип инструкции
+            # Отфильтровываем только логи от программы Meteora
+            if f"Program {meteora_program_id}" in log:
+                # Ищем инструкцию
                 if "Program log: Instruction:" in log:
-                    instruction_type = log.split("Instruction: ")[-1].strip()
-                    logger.info(f"Найдена инструкция Meteora: {instruction_type}")
+                    current_instruction = log.split("Instruction: ")[-1].strip()
+                    logger.info(f"Meteora instruction: {current_instruction}")
                     
-                # Если это Swap инструкция, обрабатываем ее
-                if instruction_type == "Swap":
-                    logger.info("Обнаружен своп в пуле Meteora")
-                    
-                    # Ищем данные пула в следующих логах
-                    for next_log in meteora_logs:
-                        if "Program data:" in next_log:
-                            data = next_log.split("Program data: ")[-1].strip()
+                # Если это инструкция Swap, начинаем искать данные пула
+                elif current_instruction == "Swap":
+                    # Ищем Program data
+                    if "Program data:" in log:
+                        data = log.split("Program data: ")[-1].strip() [(1)](https://solana.stackexchange.com/questions/13903/whats-program-data-in-the-program-logs-section-of-explorers)
+                        try:
                             pool_data = await get_pool_data_from_log(data)
                             if pool_data and filter_pool(pool_data):
                                 message = format_pool_message(pool_data)
@@ -425,8 +420,9 @@ async def process_transaction_logs(logs: List[str]):
                                         parse_mode="Markdown"
                                     )
                                     logger.info("Отправлено уведомление о пуле")
-                            break
-
+                        except Exception as e:
+                            logger.error(f"Ошибка обработки данных пула: {e}")
+                            
     except Exception as e:
         logger.error(f"Ошибка обработки логов: {e}")
 
