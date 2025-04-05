@@ -26,7 +26,6 @@ from telegram.ext import (
 )
 
 # Solana импорты
-from solana.rpc.config import RpcProgramAccountsConfig
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 import base58
