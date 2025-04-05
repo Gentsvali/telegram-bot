@@ -305,31 +305,38 @@ async def get_pool_accounts():
     return None
 
 async def monitor_pools():
-    """Мониторинг пулов с обработкой ошибок"""
-    while True:
-        try:
-            accounts = await get_pool_accounts()
-            if accounts:
-                for acc in accounts:
-                    try:
-                        pool_data = decode_pool_data(acc.account.data)
-                        if pool_data and filter_pool(pool_data):
-                            message = format_pool_message(pool_data)
-                            if message:
-                                await application.bot.send_message(
-                                    chat_id=USER_ID,
-                                    text=message,
-                                    parse_mode="Markdown"
-                                )
-                    except Exception as e:
-                        logger.debug(f"Пропуск аккаунта из-за ошибки: {e}")
-                        continue
-                        
-            await asyncio.sleep(300)  # 5 минут между запросами
-            
-        except Exception as e:
-            logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
-            await asyncio.sleep(300)
+    """Мониторинг пулов с корректным завершением"""
+    try:
+        while True:
+            try:
+                accounts = await get_pool_accounts()
+                if accounts:
+                    for acc in accounts:
+                        try:
+                            pool_data = decode_pool_data(acc.account.data)
+                            if pool_data and filter_pool(pool_data):
+                                message = format_pool_message(pool_data)
+                                if message:
+                                    await application.bot.send_message(
+                                        chat_id=USER_ID,
+                                        text=message,
+                                        parse_mode="Markdown"
+                                    )
+                        except Exception as e:
+                            logger.debug(f"Пропуск аккаунта из-за ошибки: {e}")
+                            continue
+                            
+                await asyncio.sleep(300)  # 5 минут между запросами
+                
+            except asyncio.CancelledError:
+                logger.info("Мониторинг остановлен")
+                break
+            except Exception as e:
+                logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
+                await asyncio.sleep(300)
+                
+    finally:
+        await shutdown_handler()
 
 async def check_connection():
     try:
@@ -419,18 +426,21 @@ async def startup_sequence():
 async def shutdown_handler():
     """Корректно завершает все соединения"""
     try:
-        # Отписываемся от WebSocket
-        if 'websocket' in globals():
-            await unsubscribe_websocket(websocket)
+        # Останавливаем планировщик
+        if 'scheduler' in globals():
+            scheduler.shutdown()
             
-        # Закрываем Solana клиент
-        await solana_client.close()
-        
+        # Закрываем Solana клиенты
+        for client in solana_clients:
+            await client.close()
+            
         # Останавливаем бота
-        await application.stop()
-        await application.shutdown()
-        
+        if application.running:
+            await application.stop()
+            await application.shutdown()
+            
         logger.info("Все соединения успешно закрыты")
+        
     except Exception as e:
         logger.error(f"Ошибка при завершении работы: {e}")
 
@@ -452,18 +462,14 @@ def handle_shutdown(signum, frame):
         loop = asyncio.get_event_loop()
         if loop.is_running():
             shutdown_task = loop.create_task(shutdown_handler())
-            loop.run_until_complete(asyncio.wait_for(shutdown_task, timeout=5))
+            loop.run_until_complete(asyncio.wait_for(shutdown_task, timeout=10))
     except Exception as e:
         logger.error(f"Ошибка при завершении: {e}")
-    finally:
-        if 'loop' in locals() and not loop.is_closed():
-            loop.close()
 
 # Регистрируем обработчики сигналов
 signal.signal(signal.SIGINT, handle_shutdown)
 signal.signal(signal.SIGTERM, handle_shutdown)
 
-# Основные обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обрабатывает команду /start и выводит приветственное сообщение.
