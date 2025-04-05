@@ -31,6 +31,8 @@ import base58
 import base64
 import websockets  # Добавляем websockets
 from solana.rpc.types import MemcmpOpts
+from solana.rpc.commitment import Confirmed
+from base58 import b58encode
 
 # Настройка логгера
 logging.basicConfig(
