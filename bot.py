@@ -269,17 +269,31 @@ async def get_pool_accounts():
     try:
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Используем параметры напрямую согласно документации
+        # Строка 322 в solana/rpc/core.py показывает, что фильтры должны быть объектами,
+        # а не словарями. Создаем правильный объект для memcmp:
+        memcmp = MemcmpOpts(
+            offset=32,  # смещение в байтах
+            bytes="LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"  # адрес в base58
+        )
+
+        # Создаем фильтры как объекты
+        filters = [
+            {"dataSize": 165},  # это может быть словарь
+            memcmp  # это должен быть объект MemcmpOpts
+        ]
+
+        # Отладочное логирование
+        logger.debug(f"Program ID: {program_id}")
+        logger.debug(f"Filters: {filters}")
+        
         response = await solana_client.get_program_accounts(
             program_id,
             encoding="base64",
-            filters=[{
-                "dataSize": 165  # размер в байтах
-            }],
+            filters=filters,
             commitment=solana_client.commitment
         )
         
-        logger.debug(f"Получен ответ: {response}")
+        logger.debug(f"Response: {response}")
         return response
 
     except Exception as e:
