@@ -66,6 +66,7 @@ DEFAULT_FILTERS = {
     "min_tvl": 10.0,  # Минимальный TVL (в SOL)
     "base_fee_max": 10.0,  # Максимальная базовая комиссия (в %)
     "volume_1h_min": 10.0,  # Минимальный объем за 1 час (в SOL)
+    "volume_5m_min": 5.0  # Минимальный объем за 5 минут (в SOL)
 }
 
 current_filters = DEFAULT_FILTERS.copy()
