@@ -265,23 +265,31 @@ application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
     try:
-        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-        
-        # Используем простую конфигурацию согласно документации
+        # Создаем правильную структуру фильтров согласно документации
+        filters = [
+            {
+                "dataSize": DLMM_CONFIG["pool_size"]
+            }
+        ]
+
+        # Создаем конфигурацию согласно документации
         config = {
-            "encoding": "base64",
-            "filters": [
-                {
-                    "dataSize": DLMM_CONFIG["pool_size"]
-                }
-            ]
+            "filters": filters,
+            "encoding": "jsonParsed",  # используем jsonParsed для читаемых данных
+            "commitment": solana_client.commitment
         }
-        
+
         logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
+        # Получаем программу
+        program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+        
+        # Делаем запрос согласно документации
         response = await solana_client.get_program_accounts(
             program_id,
-            **config
+            commitment=config["commitment"],
+            encoding=config["encoding"],
+            filters=config["filters"]
         )
         
         logger.debug(f"Получен ответ: {response}")
