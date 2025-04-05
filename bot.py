@@ -4,6 +4,7 @@ import sys
 import asyncio
 import time
 import json
+import websockets
 import httpx
 import signal
 from datetime import datetime, timedelta
@@ -68,7 +69,8 @@ required_env_vars = [
     "USER_ID", 
     "WEBHOOK_URL",
     "HELIUS_WS_URL", 
-    "HELIUS_RPC_URL"
+    "HELIUS_RPC_URL",
+    "HELIUS_API_KEY"  # Добавляем новую переменную
 ]
 missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 
@@ -80,10 +82,16 @@ if missing_vars:
     logger.error(error_message)
     raise ValueError(error_message)
 
+# Инициализация нескольких RPC клиентов для отказоустойчивости
+RPC_ENDPOINTS = [
+    HELIUS_RPC_URL,
+    "https://api.mainnet-beta.solana.com",
+    f"https://api.helius.xyz/v0/transactions/?api-key={os.getenv('HELIUS_API_KEY')}"
+]
 # Настройки Solana
 COMMITMENT = "confirmed"
 # Инициализация Solana клиента
-solana_client = AsyncClient(HELIUS_RPC_URL, commitment="confirmed")
+solana_clients = [AsyncClient(url, commitment=COMMITMENT) for url in RPC_ENDPOINTS]
 
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
@@ -151,6 +159,16 @@ application = (
     .get_updates_http_version("1.1")
     .build()
 )
+
+async def get_working_client():
+    for client in solana_clients:
+        try:
+            await client.get_version()
+            return client
+        except Exception as e:
+            logger.warning(f"RPC клиент недоступен: {e}")
+            continue
+    return None
 
 async def load_filters(app=None):
     """Загружает фильтры из файла или использует значения по умолчанию"""
@@ -265,12 +283,20 @@ application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
     try:
+        client = await get_working_client()
+        if not client:
+            raise Exception("Нет доступных RPC клиентов")
+            
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Используем только базовую конфигурацию согласно документации
-        response = await solana_client.get_program_accounts(
+        # Используем dataSlice для оптимизации запроса
+        response = await client.get_program_accounts(
             program_id,
-            encoding="jsonParsed"  # Используем jsonParsed для читаемых данных
+            encoding="base64",
+            data_slice={
+                "offset": 0, 
+                "length": 0
+            }
         )
         
         if response:
@@ -291,6 +317,36 @@ async def check_connection():
     except Exception as e:
         logger.error(f"Ошибка проверки подключения: {e}")
         return False
+
+async def handle_helius_ws():
+    async with websockets.connect(HELIUS_WS_URL) as websocket:
+        subscribe_msg = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "programSubscribe",
+            "params": [
+                "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+                {
+                    "encoding": "base64",
+                    "commitment": "confirmed"
+                }
+            ]
+        }
+        
+        await websocket.send(json.dumps(subscribe_msg))
+        
+        while True:
+            try:
+                msg = await websocket.recv()
+                data = json.loads(msg)
+                
+                if "method" in data and data["method"] == "programNotification":
+                    await handle_pool_change(data["params"]["result"]["value"])
+                    
+            except Exception as e:
+                logger.error(f"Ошибка WebSocket: {e}")
+                await asyncio.sleep(5)
+                break
 
 # Инициализация Quart приложения
 app = Quart(__name__)
@@ -477,31 +533,33 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def monitor_pools():
     while True:
         try:
-            logger.debug("Начинаем получение аккаунтов...")
-            accounts = await get_pool_accounts()
-            
-            if accounts:
-                logger.debug(f"Получено {len(accounts)} аккаунтов")
-                for acc in accounts:
-                    logger.debug(f"Обработка аккаунта: {acc.pubkey}")
-                    pool_data = decode_pool_data(acc.account.data)
-                    if pool_data:
-                        logger.debug(f"Данные пула: {pool_data}")
-                        if filter_pool(pool_data):
-                            message = format_pool_message(pool_data)
-                            if message:
-                                await application.bot.send_message(
-                                    chat_id=USER_ID,
-                                    text=message,
-                                    parse_mode="Markdown"
-                                )
-            else:
-                logger.warning("Не получено ни одного аккаунта")
-                
-            await asyncio.sleep(60)
-            
+            # Запускаем оба метода мониторинга параллельно
+            await asyncio.gather(
+                handle_helius_ws(),
+                poll_program_accounts()
+            )
         except Exception as e:
             logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
+async def poll_program_accounts():
+    while True:
+        try:
+            accounts = await get_pool_accounts()
+            if accounts:
+                for acc in accounts:
+                    pool_data = decode_pool_data(acc.account.data)
+                    if pool_data and filter_pool(pool_data):
+                        message = format_pool_message(pool_data)
+                        if message:
+                            await application.bot.send_message(
+                                chat_id=USER_ID,
+                                text=message,
+                                parse_mode="Markdown"
+                            )
+            await asyncio.sleep(60)
+        except Exception as e:
+            logger.error(f"Ошибка poll_program_accounts: {e}")
             await asyncio.sleep(60)
 
 async def get_pool_data_from_log(log: str) -> Optional[dict]:
