@@ -19,6 +19,7 @@ from telegram.ext import (
 from solana.rpc.async_api import AsyncClient
 from solders.pubkey import Pubkey
 from solana.rpc.commitment import Confirmed
+from solana.rpc.types import MemcmpOpts
 import base58
 
 logging.basicConfig(
@@ -166,7 +167,8 @@ async def init_solana() -> bool:
 
 async def get_pool_accounts():
     try:
-        filters = [
+        # Правильная структура фильтров согласно документации
+        memcmp_opts = [
             {"dataSize": 752}  # Размер данных DLMM пула
         ]
         
@@ -174,7 +176,7 @@ async def get_pool_accounts():
             METEORA_PROGRAM_ID,
             encoding="base64",
             commitment=Confirmed,
-            filters=filters
+            filters=memcmp_opts
         )
         
         return response.value if response else None
