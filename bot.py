@@ -286,26 +286,65 @@ async def get_pool_accounts():
             
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Используем dataSlice для оптимизации запроса
+        # Добавляем фильтры для уменьшения количества данных
+        filters = [
+            {"dataSize": 165},  # Размер аккаунта
+        ]
+        
         response = await client.get_program_accounts(
             program_id,
             encoding="base64",
-            data_slice={
-                "offset": 0, 
-                "length": 0
-            }
+            filters=filters  # Добавляем фильтры
         )
         
-        if response:
-            logger.debug(f"Получены аккаунты: {len(response)}")
-            return response
-        else:
+        if not response:
             logger.warning("Не получено ни одного аккаунта")
             return None
+
+        # Проверяем структуру данных перед обработкой
+        valid_accounts = []
+        for acc in response:
+            try:
+                if hasattr(acc, 'account') and hasattr(acc.account, 'data'):
+                    valid_accounts.append(acc)
+                else:
+                    logger.warning(f"Пропущен аккаунт с неверной структурой: {acc}")
+            except Exception as e:
+                logger.warning(f"Ошибка проверки аккаунта: {e}")
+                continue
+
+        return valid_accounts if valid_accounts else None
 
     except Exception as e:
         logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
         return None
+
+async def monitor_pools():
+    while True:
+        try:
+            accounts = await get_pool_accounts()
+            if accounts:
+                for acc in accounts:
+                    try:
+                        pool_data = decode_pool_data(acc.account.data)
+                        if pool_data and filter_pool(pool_data):
+                            message = format_pool_message(pool_data)
+                            if message:
+                                await application.bot.send_message(
+                                    chat_id=USER_ID,
+                                    text=message,
+                                    parse_mode="Markdown"
+                                )
+                    except Exception as e:
+                        logger.debug(f"Пропуск аккаунта из-за ошибки: {e}")
+                        continue
+                        
+            # Увеличиваем интервал между запросами
+            await asyncio.sleep(300)  # 5 минут между запросами
+            
+        except Exception as e:
+            logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
+            await asyncio.sleep(300)
 
 async def check_connection():
     try:
@@ -526,18 +565,6 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text("⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
         logger.error(f"Ошибка при обработке команды /setfilter: {e}", exc_info=True)
-
-async def monitor_pools():
-    while True:
-        try:
-            # Запускаем оба метода мониторинга параллельно
-            await asyncio.gather(
-                handle_helius_ws(),
-                poll_program_accounts()
-            )
-        except Exception as e:
-            logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
-            await asyncio.sleep(60)
 
 async def poll_program_accounts():
     while True:
