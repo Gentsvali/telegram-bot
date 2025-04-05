@@ -270,28 +270,25 @@ async def get_pool_accounts():
     try:
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Создаем правильный Memcmp объект
-        memcmp = Memcmp(
-            offset=32,
-            bytes=base58.b58encode(bytes("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo", 'utf-8'))
-        )
-
         # Создаем конфигурацию согласно документации
         config = {
             "encoding": "base64",
             "filters": [
                 {
                     "dataSize": DLMM_CONFIG["pool_size"]
-                },
-                memcmp
+                }
             ]
         }
+        
+        # Добавляем логирование
+        logger.debug(f"Отправка запроса с конфигурацией: {config}")
         
         response = await solana_client.get_program_accounts(
             program_id,
             **config
         )
         
+        logger.debug(f"Получен ответ: {response}")
         return response
 
     except Exception as e:
