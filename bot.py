@@ -269,18 +269,17 @@ async def get_pool_accounts():
     try:
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Используем тот же уровень commitment что и в клиенте
-        args = filter_to_args(
-            encoding="base64",
-            data_size=165,
-            commitment=solana_client.commitment  # Берем из клиента
-        )
-        
+        # Используем параметры напрямую согласно документации
         response = await solana_client.get_program_accounts(
             program_id,
-            **args
+            encoding="base64",
+            filters=[{
+                "dataSize": 165  # размер в байтах
+            }],
+            commitment=solana_client.commitment
         )
         
+        logger.debug(f"Получен ответ: {response}")
         return response
 
     except Exception as e:
