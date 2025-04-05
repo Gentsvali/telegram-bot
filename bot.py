@@ -30,6 +30,7 @@ from solders.pubkey import Pubkey
 import base58
 import base64
 import websockets  # Добавляем websockets
+from solana.rpc.types import MemcmpOpts
 
 # Настройка логгера
 logging.basicConfig(
