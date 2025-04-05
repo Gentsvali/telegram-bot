@@ -82,6 +82,53 @@ application = (
 # Базовые настройки
 FILE_PATH = "filters.json"  # Путь к файлу с фильтрами
 
+def validate_filters(filters: dict) -> bool:
+    """
+    Проверяет корректность структуры фильтров
+    
+    Args:
+        filters (dict): Словарь с фильтрами для проверки
+        
+    Returns:
+        bool: True если фильтры валидны, False если нет
+    """
+    try:
+        required_fields = {
+            "bin_steps": list,
+            "min_tvl": (int, float),
+            "base_fee_max": (int, float),
+            "volume_1h_min": (int, float),
+            "volume_5m_min": (int, float)
+        }
+        
+        # Проверяем наличие всех полей
+        if not all(field in filters for field in required_fields):
+            logger.error("Отсутствуют обязательные поля в фильтрах")
+            return False
+            
+        # Проверяем типы данных
+        for field, expected_type in required_fields.items():
+            if not isinstance(filters[field], expected_type):
+                logger.error(f"Неверный тип данных для поля {field}")
+                return False
+                
+        # Проверяем значения
+        if not all(isinstance(step, (int, float)) for step in filters["bin_steps"]):
+            logger.error("Неверный формат bin_steps")
+            return False
+            
+        # Проверяем что числовые значения положительные
+        numeric_fields = ["min_tvl", "base_fee_max", "volume_1h_min", "volume_5m_min"]
+        if not all(filters[field] >= 0 for field in numeric_fields):
+            logger.error("Отрицательные значения в фильтрах")
+            return False
+            
+        return True
+        
+    except Exception as e:
+        logger.error(f"Ошибка валидации фильтров: {e}")
+        return False
+
 async def load_filters():
     """Загружает фильтры из файла или использует значения по умолчанию"""
     global current_filters
