@@ -265,35 +265,20 @@ application.add_error_handler(error_handler)
 
 async def get_pool_accounts():
     try:
-        # Создаем правильную структуру фильтров согласно документации
-        filters = [
-            {
-                "dataSize": DLMM_CONFIG["pool_size"]
-            }
-        ]
-
-        # Создаем конфигурацию согласно документации
-        config = {
-            "filters": filters,
-            "encoding": "jsonParsed",  # используем jsonParsed для читаемых данных
-            "commitment": solana_client.commitment
-        }
-
-        logger.debug(f"Отправка запроса с конфигурацией: {config}")
-        
-        # Получаем программу
         program_id = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
         
-        # Делаем запрос согласно документации
+        # Используем только базовую конфигурацию согласно документации
         response = await solana_client.get_program_accounts(
             program_id,
-            commitment=config["commitment"],
-            encoding=config["encoding"],
-            filters=config["filters"]
+            encoding="jsonParsed"  # Используем jsonParsed для читаемых данных
         )
         
-        logger.debug(f"Получен ответ: {response}")
-        return response
+        if response:
+            logger.debug(f"Получены аккаунты: {len(response)}")
+            return response
+        else:
+            logger.warning("Не получено ни одного аккаунта")
+            return None
 
     except Exception as e:
         logger.error(f"Ошибка получения аккаунтов: {str(e)}", exc_info=True)
