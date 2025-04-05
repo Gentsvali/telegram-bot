@@ -283,7 +283,7 @@ application.add_error_handler(error_handler)
 async def get_pool_accounts():
     try:
         filters = [
-            {"dataSize": 165},  # size in bytes
+            {"dataSize": 165},
             {
                 "memcmp": {
                     "offset": 32,
@@ -291,10 +291,18 @@ async def get_pool_accounts():
                 }
             }
         ]
+        
+        config = {
+            "filters": filters,
+            "dataSlice": {
+                "offset": 0,
+                "length": 0
+            }
+        }
 
         accounts = await solana_client.get_program_accounts(
             Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"),
-            filters=filters
+            config
         )
 
         return accounts
