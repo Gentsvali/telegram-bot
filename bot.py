@@ -265,50 +265,63 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Создаем payload для DAS API с правильными полями из документации
+        # Создаем payload для DAS API с правильными полями
         payload = {
             "jsonrpc": "2.0",
             "id": "my-id",
-            "method": "getAssetsByGroup", # Используем getAssetsByGroup как указано в документации [(1)](https://solana.com/developers/courses/state-compression/compressed-nfts)
-            "params": {
-                "groupKey": "collection",
-                "groupValue": str(METEORA_PROGRAM_ID),
-                "page": 1,
-                "limit": 1000
-            }
+            "method": "getProgramAccounts",
+            "params": [
+                str(METEORA_PROGRAM_ID),
+                {
+                    "encoding": "base64",
+                    "commitment": "confirmed",
+                    "filters": [
+                        {
+                            "dataSize": 752
+                        }
+                    ],
+                    "dataSlice": {
+                        "offset": 0, 
+                        "length": 100
+                    }
+                }
+            ]
         }
 
         async with aiohttp.ClientSession() as session:
             async with session.post(HELIUS_RPC_URL, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    logger.info(f"Получен ответ от API: {data}")  # Добавляем лог для отладки
+                    logger.info(f"Получен ответ от API: {data}")
                     
-                    if "result" not in data:
-                        logger.error(f"Неожиданный ответ API: {data}")
+                    if not isinstance(data, dict) or "result" not in data:
+                        logger.error(f"Неожиданный формат ответа: {data}")
                         return []
-                        
+
                     pools = []
-                    for asset in data.get("result", []):
-                        try:
-                            content = asset.get("content", {})
-                            metadata = content.get("metadata", {})
-                            
-                            pool_data = {
-                                "id": asset.get("id"),
-                                "mint_x": metadata.get("mint_x"),
-                                "mint_y": metadata.get("mint_y"),
-                                "liquidity": float(metadata.get("liquidity", 0)),
-                                "bin_step": int(metadata.get("bin_step", 0)),
-                                "base_fee": float(metadata.get("base_fee", 0)),
-                                "tvl_sol": float(metadata.get("liquidity", 0)) / 1e9
-                            }
-                            pools.append(pool_data)
-                            logger.info(f"Найден пул: {pool_data}")
-                        except Exception as e:
-                            logger.error(f"Ошибка декодирования пула {asset.get('id', 'unknown')}: {str(e)}")
-                            logger.error(f"Данные пула: {asset}")  # Добавляем лог данных пула
-                            continue
+                    results = data["result"]
+                    
+                    if isinstance(results, list):
+                        for account in results:
+                            try:
+                                # Декодируем base64 данные
+                                account_data = base64.b64decode(account['account']['data'][0])
+                                
+                                pool_data = {
+                                    "address": account['pubkey'],
+                                    "mint_x": str(Pubkey(account_data[0:32])),
+                                    "mint_y": str(Pubkey(account_data[32:64])),
+                                    "liquidity": int.from_bytes(account_data[64:72], "little"),
+                                    "bin_step": int.from_bytes(account_data[88:90], "little"),
+                                    "base_fee": int.from_bytes(account_data[90:92], "little") / 10000,
+                                    "tvl_sol": int.from_bytes(account_data[64:72], "little") / 1e9
+                                }
+                                pools.append(pool_data)
+                                logger.info(f"Найден пул: {pool_data}")
+                            except Exception as e:
+                                logger.error(f"Ошибка декодирования пула: {str(e)}")
+                                logger.error(f"Данные аккаунта: {account}")
+                                continue
 
                     logger.info(f"Всего найдено пулов: {len(pools)}")
                     return pools
@@ -317,7 +330,7 @@ async def fetch_dlmm_pools():
                     return []
 
     except Exception as e:
-        logger.error(f"Ошибка получения пулов: {e}")
+        logger.error(f"Ошибка получения пулов: {str(e)}")
         return []
 
 async def sort_pool_accounts(accounts):
