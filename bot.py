@@ -223,105 +223,90 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_error_handler(error_handler)
 
 async def monitor_pools():
-    """Мониторинг пулов через DAS API с использованием вашего Helius ключа"""
+    """Мониторинг пулов с защитой от дублирования"""
     global known_pools
     
     try:
+        logger.info("🔄 Запуск мониторинга DLMM пулов...")
         while True:
             try:
-                # Запрашиваем пулы
-                logger.info("🔍 Проверяем новые пулы...")
                 pools = await fetch_dlmm_pools()
-                logger.info(f"📊 Найдено {len(pools)} пулов, проверяем новые...") 
                 new_pools = [p for p in pools if p["id"] not in known_pools]
                 
+                if not new_pools:
+                    logger.debug("🔄 Новых пулов не обнаружено")
+                    await asyncio.sleep(300)
+                    continue
+                
+                logger.info(f"🆕 Найдено {len(new_pools)} новых пулов")
                 for pool in new_pools:
                     try:
                         pool_data = await parse_pool_data(pool)
                         if pool_data and filter_pool(pool_data):
                             known_pools.add(pool["id"])
                             await send_pool_notification(pool_data)
-                            
                     except Exception as e:
-                        logger.error(f"Ошибка обработки пула {pool['id']}: {e}")
-                        continue
-                        
-                await asyncio.sleep(300)  # Интервал проверки (5 минут)
+                        logger.error(f"⚠️ Ошибка обработки пула: {str(e)}")
+                
+                await asyncio.sleep(300)
                 
             except asyncio.CancelledError:
-                logger.info("Мониторинг остановлен")
+                logger.info("🛑 Мониторинг остановлен по запросу")
                 break
             except Exception as e:
-                logger.error(f"Ошибка мониторинга: {e}")
-                await asyncio.sleep(60)  # Ждем минуту при ошибке
+                logger.error(f"🔴 Ошибка в цикле мониторинга: {str(e)}")
+                await asyncio.sleep(60)
                 
     finally:
-        logger.info("Мониторинг завершен")
+        logger.info("📴 Мониторинг завершил работу")
 
 async def fetch_dlmm_pools() -> list:
-    """Запрашивает пулы DLMM через DAS API с обработкой ошибок"""
+    """Запрашивает пулы DLMM через DAS API с полной обработкой ошибок"""
     try:
-        # Логирование начала запроса
-        logger.info(f"🔍 Начало запроса пулов DLMM от {METEORA_PROGRAM_ID}")
+        logger.info(f"🔍 Запрос пулов DLMM от {METEORA_PROGRAM_ID}...")
         
-        # Формирование корректного payload
         payload = {
             "jsonrpc": "2.0",
-            "id": "dlmm_pools_request",
-            "method": "getAssetsByCreator",
+            "id": "dlmm_request",
+            "method": "getAssetsByGroup",  # Используем getAssetsByGroup вместо getAssetsByCreator
             "params": {
-                "creatorAddress": str(METEORA_PROGRAM_ID),
-                "onlyVerified": False,  # Изменено для получения всех пулов
+                "groupKey": "collection",
+                "groupValue": str(METEORA_PROGRAM_ID),
                 "page": 1,
-                "limit": 1000
+                "limit": 100
             }
         }
 
-        # Создание сессии с таймаутами
-        timeout_config = aiohttp.ClientTimeout(
-            total=15,
-            connect=5,
-            sock_connect=5,
-            sock_read=10
-        )
-        
-        async with aiohttp.ClientSession(
-            timeout=timeout_config,
-            headers={"Content-Type": "application/json"}
-        ) as session:
-            # Отправка запроса
-            async with session.post(
-                HELIUS_RPC_URL,
-                json=payload,
-                raise_for_status=True
-            ) as response:
-                # Парсинг JSON ответа
-                response_data = await response.json()
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
+                # Проверка статуса ответа
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"🚨 Ошибка HTTP {resp.status}: {error_text}")
+                    return []
+
+                data = await resp.json()
                 
-                # Проверка структуры ответа
-                if "result" not in response_data:
-                    logger.error("⚠️ Некорректный формат ответа: отсутствует 'result'")
+                # Полная проверка структуры ответа
+                if "error" in data:
+                    logger.error(f"❌ Ошибка API: {data['error']}")
                     return []
                 
-                # Извлечение items с проверкой типа
-                items = response_data["result"].get("items", [])
-                if not isinstance(items, list):
-                    logger.error("🚫 Ошибка формата: items не является списком")
+                if "result" not in data or "items" not in data["result"]:
+                    logger.error("⚠️ Некорректный формат ответа")
                     return []
                 
-                logger.success(f"✅ Успешно получено {len(items)} пулов")
+                items = data["result"]["items"]
+                logger.info(f"✅ Получено {len(items)} пулов")
                 return items
 
-    except aiohttp.ClientResponseError as e:
-        logger.error(f"🌐 Ошибка HTTP {e.status}: {e.message}")
-    except aiohttp.ClientConnectionError as e:
-        logger.error(f"🔌 Ошибка подключения: {str(e)}")
-    except json.JSONDecodeError as e:
-        logger.error(f"📄 Ошибка декодирования JSON: {str(e)}")
-    except KeyError as e:
-        logger.error(f"🔑 Отсутствует ключ в ответе: {str(e)}")
+    except aiohttp.ClientError as e:
+        logger.error(f"🌐 Сетевая ошибка: {str(e)}")
+    except json.JSONDecodeError:
+        logger.error("📄 Ошибка декодирования JSON")
     except Exception as e:
-        logger.error(f"💥 Необработанная ошибка: {str(e)}", exc_info=True)
+        logger.error(f"💥 Критическая ошибка: {str(e)}", exc_info=True)
     
     return []
 
