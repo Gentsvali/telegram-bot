@@ -32,17 +32,19 @@ known_pools = set()
 
 # --- Основные функции ---
 async def fetch_pools():
-    """Запрос пулов через Helius API"""
+    """Улучшенный запрос пулов через Helius API"""
     try:
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         payload = {
             "jsonrpc": "2.0",
             "id": "dlmm-fetcher",
-            "method": "getAssetsByAuthority",
+            "method": "getAssetsByGroup",  # Измененный метод!
             "params": {
-                "authorityAddress": str(PROGRAM_ID),
+                "groupKey": "collection",
+                "groupValue": "DLMM Pool",  # Ищем по группе
                 "page": 1,
-                "limit": 100
+                "limit": 100,
+                "displayOptions": {"showUnverifiedCollections": True}  # Важно!
             }
         }
 
@@ -50,31 +52,54 @@ async def fetch_pools():
             async with session.post(url, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    return data.get("result", {}).get("items", [])
-                logger.error(f"Ошибка API: {resp.status}")
+                    logger.debug(f"Raw API response: {data}")  # Для отладки
+                    
+                    if "error" in data:
+                        logger.error(f"API error: {data['error']}")
+                        return []
+                    
+                    items = data.get("result", {}).get("items", [])
+                    logger.info(f"Found {len(items)} pools in response")
+                    return items
+                
+                logger.error(f"HTTP error {resp.status}: {await resp.text()}")
                 return []
+                
     except Exception as e:
-        logger.error(f"Ошибка fetch_pools: {e}")
+        logger.error(f"Fetch error: {str(e)}", exc_info=True)
         return []
 
 async def monitor_pools():
-    """Фоновая задача мониторинга"""
+    """Улучшенный мониторинг с детальным логированием"""
+    logger.info("Starting pool monitoring...")
     while True:
         try:
+            logger.info("Checking for new pools...")
             pools = await fetch_pools()
+            
+            if not pools:
+                logger.warning("Received empty pools list")
+                await asyncio.sleep(60)
+                continue
+                
             new_pools = [p for p in pools if p["id"] not in known_pools]
             
-            if new_pools:
-                logger.info(f"Найдено новых пулов: {len(new_pools)}")
-                for pool in new_pools:
-                    pool_id = pool["id"]
-                    known_pools.add(pool_id)
-                    await send_notification(pool_id)
+            if not new_pools:
+                logger.info("No new pools found this cycle")
+                await asyncio.sleep(60)
+                continue
+                
+            logger.info(f"Found {len(new_pools)} new pools")
+            for pool in new_pools:
+                pool_id = pool["id"]
+                known_pools.add(pool_id)
+                logger.info(f"New pool detected: {pool_id}")
+                await send_notification(pool_id)
             
             await asyncio.sleep(60)
             
         except Exception as e:
-            logger.error(f"Ошибка мониторинга: {e}")
+            logger.error(f"Monitoring crashed: {str(e)}", exc_info=True)
             await asyncio.sleep(30)
 
 async def send_notification(pool_id):
