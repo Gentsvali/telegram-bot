@@ -265,52 +265,69 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Создаем фильтры для getProgramAccounts
-        filters = [
-            {
-                "dataSize": 752  # Размер данных DLMM пула
-            }
-        ]
-
-        # Получаем аккаунты с фильтрами
-        accounts = await solana_client.get_program_accounts(
-            METEORA_PROGRAM_ID,  # Используем pubkey напрямую
-            filters=filters,
-            encoding="base64"
-        )
-
-        if not accounts:
-            logger.info("Пулы не найдены")
-            return []
-
-        logger.info(f"Всего найдено пулов: {len(accounts)}")
-        
-        filtered_pools = []
-        for acc in accounts:
-            try:
-                # Декодируем данные аккаунта
-                data = base64.b64decode(acc.account.data)
-                
-                # Извлекаем данные пула
-                pool_data = {
-                    "address": str(acc.pubkey),
-                    "mint_x": str(PublicKey(data[0:32])),
-                    "mint_y": str(PublicKey(data[32:64])),
-                    "liquidity": int.from_bytes(data[64:72], "little"),
-                    "bin_step": int.from_bytes(data[88:90], "little"),
-                    "base_fee": int.from_bytes(data[90:92], "little") / 10000,
-                    "tvl_sol": int.from_bytes(data[64:72], "little") / 1e9
+        # Создаем правильный RPC запрос согласно документации
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getProgramAccounts",
+            "params": [
+                str(METEORA_PROGRAM_ID),
+                {
+                    "encoding": "base64",
+                    "commitment": "confirmed",
+                    "filters": [
+                        {
+                            "dataSize": 752
+                        }
+                    ]
                 }
-                
-                if filter_pool(pool_data):
-                    filtered_pools.append(pool_data)
-                    
-            except Exception as e:
-                logger.error(f"Ошибка декодирования пула: {e}")
-                continue
+            ]
+        }
 
-        logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
-        return filtered_pools
+        # Используем aiohttp для прямого RPC запроса
+        async with aiohttp.ClientSession() as session:
+            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
+                if resp.status != 200:
+                    logger.error(f"HTTP Error: {resp.status}")
+                    return []
+                    
+                data = await resp.json()
+                if "error" in data:
+                    logger.error(f"API Error: {data['error']}")
+                    return []
+
+                results = data.get("result", [])
+                logger.info(f"Всего найдено пулов: {len(results)}")
+                
+                filtered_pools = []
+                for acc in results:
+                    try:
+                        account_data = acc.get("account", {}).get("data", [""])[0]
+                        if not account_data:
+                            continue
+                            
+                        # Декодируем base64 данные
+                        data = base64.b64decode(account_data)
+                        
+                        pool_data = {
+                            "address": acc.get("pubkey", ""),
+                            "mint_x": str(data[0:32].hex()),
+                            "mint_y": str(data[32:64].hex()),
+                            "liquidity": int.from_bytes(data[64:72], "little"),
+                            "bin_step": int.from_bytes(data[88:90], "little"),
+                            "base_fee": int.from_bytes(data[90:92], "little") / 10000,
+                            "tvl_sol": int.from_bytes(data[64:72], "little") / 1e9
+                        }
+                        
+                        if filter_pool(pool_data):
+                            filtered_pools.append(pool_data)
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка декодирования пула: {e}")
+                        continue
+
+                logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
+                return filtered_pools
 
     except Exception as e:
         logger.error(f"Ошибка получения пулов: {e}")
