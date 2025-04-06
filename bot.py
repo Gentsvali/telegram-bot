@@ -246,93 +246,85 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_error_handler(error_handler)
 
 async def monitor_pools():
-    """Мониторинг пулов с защитой от дублирования"""
     global known_pools
     
-    try:
-        logger.info("🔄 Запуск мониторинга DLMM пулов...")
-        while True:
-            try:
-                pools = await fetch_dlmm_pools()
-                new_pools = [p for p in pools if p["id"] not in known_pools]
-                
-                if not new_pools:
-                    logger.debug("🔄 Новых пулов не обнаружено")
+    while True:
+        try:
+            # Пробуем основной метод
+            pools = await fetch_dlmm_pools()
+            
+            # Если не сработало - пробуем fallback
+            if not pools:
+                pools = await fetch_dlmm_pools_fallback()
+                if not pools:
+                    logger.warning("Не удалось получить пулы ни одним методом")
                     await asyncio.sleep(300)
                     continue
-                
-                logger.info(f"🆕 Найдено {len(new_pools)} новых пулов")
-                for pool in new_pools:
-                    try:
-                        pool_data = await parse_pool_data(pool)
-                        if pool_data and filter_pool(pool_data):
-                            known_pools.add(pool["id"])
-                            await send_pool_notification(pool_data)
-                    except Exception as e:
-                        logger.error(f"⚠️ Ошибка обработки пула: {str(e)}")
-                
+            
+            new_pools = [p for p in pools if p["id"] not in known_pools]
+            
+            if not new_pools:
+                logger.debug("Новых пулов не обнаружено")
                 await asyncio.sleep(300)
-                
-            except asyncio.CancelledError:
-                logger.info("🛑 Мониторинг остановлен по запросу")
-                break
-            except Exception as e:
-                logger.error(f"🔴 Ошибка в цикле мониторинга: {str(e)}")
-                await asyncio.sleep(60)
-                
-    finally:
-        logger.info("📴 Мониторинг завершил работу")
+                continue
+            
+            logger.info(f"🆕 Найдено {len(new_pools)} новых пулов")
+            for pool in new_pools:
+                try:
+                    pool_data = await parse_pool_data(pool)
+                    if pool_data and filter_pool(pool_data):
+                        known_pools.add(pool["id"])
+                        await send_pool_notification(pool_data)
+                except Exception as e:
+                    logger.error(f"⚠️ Ошибка обработки пула: {str(e)}")
+            
+            await asyncio.sleep(300)
+            
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"🔴 Критическая ошибка мониторинга: {str(e)}")
+            await asyncio.sleep(60)
 
 async def fetch_dlmm_pools():
-    """Получение пулов через DAS API с правильными фильтрами"""
+    """Альтернативный метод получения DLMM пулов через getAssetsByGroup"""
     try:
-        logger.info("🔍 Ищем активные DLMM пулы...")
+        logger.info("🔍 Ищем DLMM пулы через getAssetsByGroup...")
         
-        # Правильный формат запроса для getProgramAccounts
         payload = {
             "jsonrpc": "2.0",
-            "id": "dlmm-pool-fetcher",
-            "method": "getProgramAccounts",
-            "params": [
-                str(METEORA_PROGRAM_ID),
-                {
-                    "encoding": "base64",
-                    "commitment": "confirmed",
-                    "filters": [
-                        {"dataSize": 752}  # Размер данных для DLMM пулов
-                    ]
-                }
-            ]
+            "id": "dlmm-fetcher",
+            "method": "getAssetsByGroup",
+            "params": {
+                "groupKey": "collection",
+                "groupValue": "DLMM Pool",  # Или конкретный collection адрес
+                "page": 1,
+                "limit": 1000
+            }
         }
 
-        # Пробуем разные RPC точки последовательно
-        for endpoint in RPC_ENDPOINTS:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        endpoint,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=10)
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if "result" in data:
-                                accounts = data["result"]
-                                logger.info(f"Найдено {len(accounts)} пулов")
-                                return accounts
-                            else:
-                                logger.error(f"Неожиданный формат ответа от {endpoint}: {data}")
-                        else:
-                            logger.error(f"Ошибка {resp.status} от {endpoint}: {await resp.text()}")
-            except Exception as e:
-                logger.warning(f"Ошибка при запросе к {endpoint}: {str(e)}")
-                continue
-                
-        logger.error("Все RPC endpoints недоступны")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv('HELIUS_API_KEY')}"
+        }
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(
+                HELIUS_RPC_URL,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "result" in data and data["result"]["items"]:
+                        logger.info(f"Найдено {len(data['result']['items'])} пулов")
+                        return data["result"]["items"]
+                    logger.error(f"Пустой ответ: {data}")
+                else:
+                    logger.error(f"Ошибка {resp.status}: {await resp.text()}")
         return []
-        
     except Exception as e:
-        logger.error(f"Критическая ошибка в fetch_dlmm_pools: {str(e)}")
+        logger.error(f"Ошибка fetch_dlmm_pools: {str(e)}")
         return []
 
 async def sort_pool_accounts(accounts):
