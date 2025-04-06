@@ -405,21 +405,29 @@ async def shutdown_handler():
     try:
         logger.info("🛑 Завершение работы...")
         
-        # 1. Остановка всех асинхронных задач
+        # 1. Отменяем задачу мониторинга
         tasks = [t for t in asyncio.all_tasks() 
                 if t is not asyncio.current_task()]
+                
+        # 2. Даем время на корректное завершение
+        if tasks:
+            await asyncio.wait(tasks, timeout=5.0)
+            
+        # 3. Принудительно отменяем незавершенные задачи
         for task in tasks:
-            task.cancel()
-        
-        # 2. Остановка бота Telegram
+            if not task.done():
+                task.cancel()
+                
+        # 4. Останавливаем бота
         if application.running:
             await application.stop()
             await application.shutdown()
             
-        # 3. Закрытие соединений Solana
+        # 5. Закрываем соединения Solana
         await solana_client.close()
         
         logger.info("✅ Система корректно остановлена")
+        
     except Exception as e:
         logger.error(f"⚠️ Ошибка при остановке: {str(e)}")
 
