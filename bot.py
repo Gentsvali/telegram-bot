@@ -265,13 +265,14 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Создаем payload для DAS API
+        # Создаем payload для DAS API с правильными полями из документации
         payload = {
             "jsonrpc": "2.0",
             "id": "my-id",
-            "method": "searchAssets",
+            "method": "getAssetsByGroup", # Используем getAssetsByGroup как указано в документации [(1)](https://solana.com/developers/courses/state-compression/compressed-nfts)
             "params": {
-                "ownerAddress": str(METEORA_PROGRAM_ID),
+                "groupKey": "collection",
+                "groupValue": str(METEORA_PROGRAM_ID),
                 "page": 1,
                 "limit": 1000
             }
@@ -281,27 +282,32 @@ async def fetch_dlmm_pools():
             async with session.post(HELIUS_RPC_URL, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    logger.info(f"Получен ответ от API: {data}")  # Добавляем лог для отладки
                     
                     if "result" not in data:
                         logger.error(f"Неожиданный ответ API: {data}")
                         return []
                         
                     pools = []
-                    for asset in data["result"]:
+                    for asset in data.get("result", []):
                         try:
+                            content = asset.get("content", {})
+                            metadata = content.get("metadata", {})
+                            
                             pool_data = {
-                                "id": asset["id"],
-                                "mint_x": asset["content"]["metadata"]["mint_x"],
-                                "mint_y": asset["content"]["metadata"]["mint_y"],
-                                "liquidity": int(asset["content"]["metadata"]["liquidity"]),
-                                "bin_step": int(asset["content"]["metadata"]["bin_step"]),
-                                "base_fee": float(asset["content"]["metadata"]["base_fee"]),
-                                "tvl_sol": float(asset["content"]["metadata"]["liquidity"]) / 1e9
+                                "id": asset.get("id"),
+                                "mint_x": metadata.get("mint_x"),
+                                "mint_y": metadata.get("mint_y"),
+                                "liquidity": float(metadata.get("liquidity", 0)),
+                                "bin_step": int(metadata.get("bin_step", 0)),
+                                "base_fee": float(metadata.get("base_fee", 0)),
+                                "tvl_sol": float(metadata.get("liquidity", 0)) / 1e9
                             }
                             pools.append(pool_data)
                             logger.info(f"Найден пул: {pool_data}")
                         except Exception as e:
-                            logger.error(f"Ошибка декодирования пула: {e}")
+                            logger.error(f"Ошибка декодирования пула {asset.get('id', 'unknown')}: {str(e)}")
+                            logger.error(f"Данные пула: {asset}")  # Добавляем лог данных пула
                             continue
 
                     logger.info(f"Всего найдено пулов: {len(pools)}")
