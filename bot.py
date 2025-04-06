@@ -265,25 +265,52 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Получаем все пулы
-        accounts = await solana_client.get_program_accounts(
-            METEORA_PROGRAM_ID,
-            encoding="base64",
-            commitment="confirmed"
-        )
-        
-        total_pools = len(accounts)
-        logger.info(f"Всего найдено пулов: {total_pools}")
-        
-        # Декодируем и фильтруем
-        filtered_pools = []
-        for acc in accounts:
-            pool_data = decode_pool_data(acc.account.data)
-            if pool_data and filter_pool(pool_data):
-                filtered_pools.append(pool_data)
-        
-        logger.info(f"Найдено {total_pools} пулов, из них подходят под фильтры: {len(filtered_pools)}")
-        return filtered_pools
+        # Формируем правильный RPC запрос согласно документации
+        payload = {
+            "jsonrpc": "2.0", # [(1)](https://solana.com/docs/rpc/http)
+            "id": 1,
+            "method": "getProgramAccounts", # [(1)](https://solana.com/docs/rpc/http)
+            "params": [
+                str(METEORA_PROGRAM_ID),
+                {
+                    "encoding": "base64", # [(2)](https://solana.com/docs/rpc/http/getprogramaccounts)
+                    "commitment": "confirmed", # [(2)](https://solana.com/docs/rpc/http/getprogramaccounts)
+                    "filters": [
+                        {
+                            "dataSize": 752 # Размер данных DLMM пула
+                        }
+                    ]
+                }
+            ]
+        }
+
+        # Используем правильный URL и заголовки
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(HELIUS_RPC_URL, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    logger.error(f"HTTP Error: {resp.status}")
+                    return []
+                    
+                data = await resp.json()
+                if "error" in data:
+                    logger.error(f"API Error: {data['error']}")
+                    return []
+
+                results = data.get("result", [])
+                logger.info(f"Всего найдено пулов: {len(results)}")
+                
+                filtered_pools = []
+                for acc in results:
+                    pool_data = decode_pool_data(base64.b64decode(acc["account"]["data"][0]))
+                    if pool_data and filter_pool(pool_data):
+                        filtered_pools.append(pool_data)
+
+                logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
+                return filtered_pools
 
     except Exception as e:
         logger.error(f"Request failed: {str(e)}")
