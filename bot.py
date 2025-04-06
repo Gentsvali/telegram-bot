@@ -284,47 +284,55 @@ async def monitor_pools():
         logger.info("📴 Мониторинг завершил работу")
 
 async def fetch_dlmm_pools():
-    """Получение пулов через DAS API"""
+    """Получение пулов через DAS API с правильными фильтрами"""
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Базовый запрос без фильтров
+        # Правильный формат запроса для getProgramAccounts
         payload = {
             "jsonrpc": "2.0",
-            "id": "my-id",
+            "id": "dlmm-pool-fetcher",
             "method": "getProgramAccounts",
             "params": [
                 str(METEORA_PROGRAM_ID),
                 {
-                    "encoding": "base64",  # используем base64 для больших данных [(1)](https://solana.com/docs/rpc/http/getprogramaccounts)
+                    "encoding": "base64",
                     "commitment": "confirmed",
-                    "withContext": True
+                    "filters": [
+                        {"dataSize": 752}  # Размер данных для DLMM пулов
+                    ]
                 }
             ]
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    logger.info(f"Полный ответ API: {data}")
-                    
-                    if "result" not in data:
-                        logger.error(f"Неожиданный формат ответа: {data}")
-                        return []
-
-                    accounts = data.get("result", {}).get("value", [])
-                    logger.info(f"Сырые данные аккаунтов: {accounts}")
-                    
-                    return accounts
-
-                else:
-                    logger.error(f"Ошибка API: {resp.status}")
-                    logger.error(f"Текст ответа: {await resp.text()}")
-                    return []
-
+        # Пробуем разные RPC точки последовательно
+        for endpoint in RPC_ENDPOINTS:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        endpoint,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if "result" in data:
+                                accounts = data["result"]
+                                logger.info(f"Найдено {len(accounts)} пулов")
+                                return accounts
+                            else:
+                                logger.error(f"Неожиданный формат ответа от {endpoint}: {data}")
+                        else:
+                            logger.error(f"Ошибка {resp.status} от {endpoint}: {await resp.text()}")
+            except Exception as e:
+                logger.warning(f"Ошибка при запросе к {endpoint}: {str(e)}")
+                continue
+                
+        logger.error("Все RPC endpoints недоступны")
+        return []
+        
     except Exception as e:
-        logger.error(f"Ошибка получения пулов: {str(e)}")
+        logger.error(f"Критическая ошибка в fetch_dlmm_pools: {str(e)}")
         return []
 
 async def sort_pool_accounts(accounts):
