@@ -265,42 +265,26 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getProgramAccounts", 
-            "params": [
-                str(METEORA_PROGRAM_ID),
-                {
-                    "encoding": "base64",  # Используем base64 кодирование [(1)](https://solana.com/developers/guides/javascript/get-program-accounts)
-                    "commitment": "confirmed",  # Используем confirmed для быстрого ответа [(2)](https://solana.com/docs/rpc)
-                    "filters": [
-                        {
-                            "dataSize": 752
-                        }
-                    ]
-                }
-            ]
-        }
+        # Получаем все пулы
+        accounts = await solana_client.get_program_accounts(
+            METEORA_PROGRAM_ID,
+            encoding="base64",
+            commitment="confirmed"
+        )
+        
+        total_pools = len(accounts)
+        logger.info(f"Всего найдено пулов: {total_pools}")
+        
+        # Декодируем и фильтруем
+        filtered_pools = []
+        for acc in accounts:
+            pool_data = decode_pool_data(acc.account.data)
+            if pool_data and filter_pool(pool_data):
+                filtered_pools.append(pool_data)
+        
+        logger.info(f"Найдено {total_pools} пулов, из них подходят под фильтры: {len(filtered_pools)}")
+        return filtered_pools
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(HELIUS_RPC_URL, json=payload, timeout=30) as resp:  # Добавляем timeout
-                if resp.status != 200:
-                    logger.error(f"HTTP Error: {resp.status}")
-                    return []
-                    
-                data = await resp.json()
-                if "error" in data:
-                    logger.error(f"API Error: {data['error']}")
-                    return []
-                    
-                results = data.get("result", [])
-                logger.info(f"Найдено {len(results)} пулов")
-                return results
-
-    except asyncio.TimeoutError:
-        logger.error("Timeout при запросе к API")
-        return []
     except Exception as e:
         logger.error(f"Request failed: {str(e)}")
         return []
