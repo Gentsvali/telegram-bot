@@ -261,54 +261,48 @@ async def monitor_pools():
         logger.info("📴 Мониторинг завершил работу")
 
 async def fetch_dlmm_pools() -> list:
-    """Запрашивает пулы DLMM через DAS API с полной обработкой ошибок"""
+    """Запрашивает пулы DLMM через DAS API"""
     try:
-        logger.info(f"🔍 Запрос пулов DLMM от {METEORA_PROGRAM_ID}...")
+        logger.info(f"🔍 Запрос пулов DLMM...")
         
         payload = {
             "jsonrpc": "2.0",
             "id": "dlmm_request",
-            "method": "getAssetsByGroup",  # Используем getAssetsByGroup вместо getAssetsByCreator
+            "method": "searchAssets",
             "params": {
-                "groupKey": "collection",
-                "groupValue": str(METEORA_PROGRAM_ID),
+                "condition": {
+                    "interface": "LiquidityPool",
+                    "ownerAddress": str(METEORA_PROGRAM_ID)
+                },
                 "page": 1,
                 "limit": 100
             }
         }
 
-        timeout = aiohttp.ClientTimeout(total=10)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession() as session:
             async with session.post(HELIUS_RPC_URL, json=payload) as resp:
-                # Проверка статуса ответа
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"🚨 Ошибка HTTP {resp.status}: {error_text}")
-                    return []
-
+                # Получаем сырой ответ
                 data = await resp.json()
                 
-                # Полная проверка структуры ответа
+                # --- ВРЕМЕННЫЙ DEBUG-ВЫВОД (НАЧАЛО) ---
+                debug_path = "api_response_debug.json"
+                with open(debug_path, "w") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                logger.info(f"📁 Полный ответ сохранён в {debug_path}")
+                # --- ВРЕМЕННЫЙ DEBUG-ВЫВОД (КОНЕЦ) ---
+                
+                # Проверка ошибок API
                 if "error" in data:
                     logger.error(f"❌ Ошибка API: {data['error']}")
                     return []
                 
-                if "result" not in data or "items" not in data["result"]:
-                    logger.error("⚠️ Некорректный формат ответа")
-                    return []
-                
-                items = data["result"]["items"]
-                logger.info(f"✅ Получено {len(items)} пулов")
+                items = data.get("result", {}).get("items", [])
+                logger.info(f"✅ Найдено {len(items)} пулов")
                 return items
 
-    except aiohttp.ClientError as e:
-        logger.error(f"🌐 Сетевая ошибка: {str(e)}")
-    except json.JSONDecodeError:
-        logger.error("📄 Ошибка декодирования JSON")
     except Exception as e:
-        logger.error(f"💥 Критическая ошибка: {str(e)}", exc_info=True)
-    
-    return []
+        logger.error(f"💥 Ошибка запроса: {str(e)}", exc_info=True)
+        return []
 
 async def parse_pool_data(pool: dict) -> Optional[dict]:
     """Извлекает ключевые данные из структуры пула"""
@@ -371,63 +365,49 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup_sequence():
-    """Выполняет последовательность запуска."""
     try:
-        # 1. Проверка подключения к Solana
-        logger.info("🔌 Проверяем подключение к Solana...")
-        if not await init_solana():
+        # 1. Проверка Solana RPC
+        if not await check_solana_connection():
             return False
 
         # 2. Загрузка фильтров
-        logger.info("📥 Загрузка фильтров...")
-        try:
-            if not os.path.exists(FILE_PATH):
-                logger.info("Используем фильтры по умолчанию")
-            else:
-                await load_filters()
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки фильтров: {e}")
-            return False
-        
-        # 3. Инициализация бота
-        logger.info("🤖 Инициализация бота...")
-        await application.initialize()
-        await application.start()
-        logger.info("✅ Бот успешно инициализирован")
-       
-        #  4. Запуск мониторинга 
-        asyncio.create_task(monitor_pools())
-        logger.info("DLMM Pool Monitor запущен через DAS API")
-        return True
+        await load_filters()
 
+        # 3. Инициализация бота
+        await init_telegram_bot()
+
+        # 4. Запуск мониторинга (ТОЛЬКО ОДИН РАЗ)
+        asyncio.create_task(pool_monitor_job())
+        
+        logger.info("🚀 Система мониторинга успешно запущена")
+        return True
     except Exception as e:
-        logger.error(f"💥 Критическая ошибка при запуске: {e}")
+        logger.critical(f"🛑 Ошибка запуска: {str(e)}", exc_info=True)
         return False
 
 @app.after_serving
 async def shutdown_handler():
-    """Корректно завершает все соединения"""
-    global monitoring_active
-    monitoring_active = False  # Флаг для остановки мониторинга
+    """Корректное завершение работы"""
     try:
-        logger.info("🛑 Начало корректного завершения работы...")
-        # Останавливаем мониторинг
+        logger.info("🛑 Завершение работы...")
+        
+        # 1. Остановка всех асинхронных задач
         tasks = [t for t in asyncio.all_tasks() 
-                if t is not asyncio.current_task() and not t.done()]
+                if t is not asyncio.current_task()]
         for task in tasks:
             task.cancel()
         
-        # Останавливаем бота
+        # 2. Остановка бота Telegram
         if application.running:
             await application.stop()
             await application.shutdown()
             
-        # Закрываем Solana клиент    
+        # 3. Закрытие соединений Solana
         await solana_client.close()
         
-        logger.info("✅ Все соединения успешно закрыты")
+        logger.info("✅ Система корректно остановлена")
     except Exception as e:
-        logger.error(f"Ошибка при завершении работы: {str(e)}", exc_info=True)
+        logger.error(f"⚠️ Ошибка при остановке: {str(e)}")
 
 async def shutdown_signal(signal, loop):
     """
@@ -534,7 +514,6 @@ async def show_filters(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = (
             "⚙️ Текущие фильтры:\n"
-            f"• Размер данных: {current_filters.get('dataSize', 165)} байт\n"
             f"• Bin Steps: {', '.join(map(str, current_filters['bin_steps']))}\n"
             f"• Мин TVL: {current_filters['min_tvl']:,.2f} SOL\n"
             f"• Макс базовая комиссия: {current_filters['base_fee_max']}%\n"
