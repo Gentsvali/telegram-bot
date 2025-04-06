@@ -261,13 +261,15 @@ async def monitor_pools():
         logger.info("📴 Мониторинг завершил работу")
 
 async def fetch_dlmm_pools():
+    """Получение пулов через DAS API"""
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
-         # Добавляем проверку METEORA_PROGRAM_ID
-        logger.info(f"Проверка METEORA_PROGRAM_ID: {METEORA_PROGRAM_ID}")
-        logger.info(f"Base58 decoded METEORA_PROGRAM_ID: {base58.b58decode(str(METEORA_PROGRAM_ID)).hex()}")
         
-        # Используем более простой запрос сначала
+        # Проверяем METEORA_PROGRAM_ID
+        logger.info(f"Проверка METEORA_PROGRAM_ID: {METEORA_PROGRAM_ID}")
+        logger.info(f"Base58 расшифрован METEORA_PROGRAM_ID: {base58.b58decode(str(METEORA_PROGRAM_ID)).hex()}")
+        
+        # Создаем payload с множественными фильтрами
         payload = {
             "jsonrpc": "2.0",
             "id": "my-id",
@@ -275,27 +277,69 @@ async def fetch_dlmm_pools():
             "params": [
                 str(METEORA_PROGRAM_ID),
                 {
-                    "encoding": "jsonParsed",
-                    "commitment": "confirmed"
+                    "encoding": "base64",
+                    "commitment": "confirmed",
+                    "filters": [
+                        {
+                            "dataSize": 752
+                        },
+                        {
+                            "memcmp": {
+                                "offset": 32,  # Пропускаем первые 32 байта
+                                "bytes": base58.b58encode(bytes([1])).decode()  # Ищем маркер инициализации
+                            }
+                        }
+                    ],
+                    "withContext": True  # Добавляем контекст для дополнительной информации
                 }
             ]
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(HELIUS_RPC_URL, 
-                                  json=payload, 
-                                  headers={"Content-Type": "application/json"}) as resp:
+            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    logger.info(f"Raw API response: {data}")
-                    return data.get("result", [])
+                    logger.info(f"Полный ответ API: {data}")  # Логируем весь ответ
+                    
+                    if "result" not in data:
+                        logger.error(f"Неожиданный формат ответа: {data}")
+                        return []
+
+                    context = data.get("result", {}).get("context", {})
+                    accounts = data.get("result", {}).get("value", [])
+                    
+                    logger.info(f"Контекст запроса: {context}")
+                    logger.info(f"Количество найденных аккаунтов: {len(accounts)}")
+
+                    pools = []
+                    for account in accounts:
+                        try:
+                            # Логируем сырые данные аккаунта
+                            logger.info(f"Сырые данные аккаунта: {account}")
+                            
+                            account_data = base64.b64decode(account['account']['data'][0])
+                            logger.info(f"Декодированные данные: {account_data[:100].hex()}")
+                            
+                            pool_data = {
+                                "address": account['pubkey'],
+                                "owner": account['account']['owner'],
+                                "data_len": len(account_data)
+                            }
+                            pools.append(pool_data)
+                            
+                        except Exception as e:
+                            logger.error(f"Ошибка декодирования пула: {str(e)}")
+                            continue
+
+                    logger.info(f"Всего найдено пулов: {len(pools)}")
+                    return pools
                 else:
-                    logger.error(f"API Error Status: {resp.status}")
-                    logger.error(f"API Error Response: {await resp.text()}")
+                    logger.error(f"Ошибка API: {resp.status}")
+                    logger.error(f"Текст ответа: {await resp.text()}")
                     return []
 
     except Exception as e:
-        logger.error(f"Error fetching pools: {str(e)}")
+        logger.error(f"Ошибка получения пулов: {str(e)}")
         return []
 
 async def sort_pool_accounts(accounts):
