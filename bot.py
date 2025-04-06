@@ -380,7 +380,14 @@ async def startup_sequence():
 
         # 2. Загрузка фильтров
         logger.info("📥 Загрузка фильтров...")
-        await load_filters()
+        try:
+            if not os.path.exists(FILE_PATH):
+                logger.info("Используем фильтры по умолчанию")
+            else:
+                await load_filters()
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки фильтров: {e}")
+            return False
         
         # 3. Инициализация бота
         logger.info("🤖 Инициализация бота...")
@@ -388,7 +395,7 @@ async def startup_sequence():
         await application.start()
         logger.info("✅ Бот успешно инициализирован")
        
-       #  4. Запуск мониторинга 
+        #  4. Запуск мониторинга 
         asyncio.create_task(monitor_pools())
         logger.info("DLMM Pool Monitor запущен через DAS API")
         return True
@@ -1220,50 +1227,6 @@ async def home():
     except Exception as e:
         logger.error(f"Ошибка на главной странице: {e}")
         return {"status": "error"}, 500
-
-async def startup_sequence():
-    """
-    Выполняет последовательность запуска приложения.
-    """
-    try:
-        # 1. Проверка Solana
-        logger.info("🔌 Проверка подключения к Solana...")
-        try:
-            response = await solana_client.get_version()
-            if not response.value:
-                logger.error("❌ Ошибка подключения к Solana")
-                return False
-            logger.info("✅ Подключение к Solana активно")
-        except Exception as e:
-            logger.error(f"❌ Ошибка Solana: {e}")
-            return False
-
-        # 2. Загрузка фильтров
-        logger.info("📥 Загрузка фильтров...")
-        try:
-            if not os.path.exists(FILE_PATH):
-                logger.info("Используем фильтры по умолчанию")
-            else:
-                await load_filters()
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки фильтров: {e}")
-            return False
-
-        # 3. Запуск бота
-        logger.info("🤖 Запуск бота...")
-        try:
-            await application.initialize()
-            await application.start()
-            logger.info("✅ Бот запущен")
-        except Exception as e:
-            logger.error(f"❌ Ошибка запуска бота: {e}")
-            return False
-
-        return True
-
-    except Exception as e:
-        logger.error(f"💥 Критическая ошибка: {e}")
-        return False
 
 if __name__ == "__main__":
     try:
