@@ -174,15 +174,17 @@ async def init_solana() -> bool:
 async def get_pool_accounts():
     try:
         # Правильная структура фильтров согласно документации
-        memcmp_opts = [
-            {"dataSize": 752}  # Размер данных DLMM пула
-        ]
+        filters=[
+  {
+    dataSize: LIQUIDITY_STATE_LAYOUT_V4_SPAN  // Размер данных должен быть числом
+  }
+]
         
         response = await solana_client.get_program_accounts(
             METEORA_PROGRAM_ID,
             encoding="base64",
             commitment=Confirmed,
-            filters=memcmp_opts
+            filters=filters
         )
         
         return response.value if response else None
@@ -267,14 +269,15 @@ async def fetch_dlmm_pools() -> list:
         
         payload = {
             "jsonrpc": "2.0",
-            "id": "dlmm_scan",
-            "method": "searchAssets",
-            "params": {
-                "ownerAddress": str(METEORA_PROGRAM_ID),
-                "interface": "LiquidityPool",
-                "page": 1,
-                "limit": 100
-            }
+            "id": 1,
+            "method": "programSubscribe",
+            "params": [
+                str(METEORA_PROGRAM_ID),
+                {
+                    "encoding": "base64",
+                    "commitment": "confirmed"
+                }
+            ]
         }
 
         async with aiohttp.ClientSession() as session:
@@ -592,8 +595,11 @@ async def poll_program_accounts():
         while True:
             try:
                 # Создаем фильтры для getProgramAccounts
-                filters = [
-                    {"dataSize": LIQUIDITY_STATE_LAYOUT_V4_SPAN}  # Размер данных DLMM пула [(1)](https://solana.stackexchange.com/questions/8608/faster-method-to-retrieve-pool-keys-raydium)
+                filters=[
+  {
+    dataSize: LIQUIDITY_STATE_LAYOUT_V4_SPAN  // Размер данных должен быть числом
+  }
+]
                 ]
                 
                 # Получаем аккаунты с фильтрами
