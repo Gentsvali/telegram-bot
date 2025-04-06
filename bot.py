@@ -273,61 +273,74 @@ async def fetch_dlmm_pools():
             "params": [
                 str(METEORA_PROGRAM_ID),
                 {
-                    "encoding": "base64",
+                    "encoding": "jsonParsed", # Changed from base64 to jsonParsed
                     "commitment": "confirmed",
                     "filters": [
                         {
                             "dataSize": 752
+                        },
+                        {
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": METEORA_PROGRAM_ID
+                            }
                         }
                     ]
                 }
             ]
         }
 
-        # Используем aiohttp для прямого RPC запроса
-        async with aiohttp.ClientSession() as session:
-            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
-                if resp.status != 200:
-                    logger.error(f"HTTP Error: {resp.status}")
-                    return []
-                    
-                data = await resp.json()
-                if "error" in data:
-                    logger.error(f"API Error: {data['error']}")
-                    return []
+        headers = {
+            "Content-Type": "application/json"
+        }
 
-                results = data.get("result", [])
-                logger.info(f"Всего найдено пулов: {len(results)}")
-                
-                filtered_pools = []
-                for acc in results:
-                    try:
-                        account_data = acc.get("account", {}).get("data", [""])[0]
-                        if not account_data:
+        async with aiohttp.ClientSession() as session:
+            # Try each RPC endpoint until successful
+            for rpc_url in RPC_ENDPOINTS:
+                try:
+                    async with session.post(rpc_url, json=payload, headers=headers) as resp:
+                        if resp.status != 200:
                             continue
                             
-                        # Декодируем base64 данные
-                        data = base64.b64decode(account_data)
-                        
-                        pool_data = {
-                            "address": acc.get("pubkey", ""),
-                            "mint_x": str(data[0:32].hex()),
-                            "mint_y": str(data[32:64].hex()),
-                            "liquidity": int.from_bytes(data[64:72], "little"),
-                            "bin_step": int.from_bytes(data[88:90], "little"),
-                            "base_fee": int.from_bytes(data[90:92], "little") / 10000,
-                            "tvl_sol": int.from_bytes(data[64:72], "little") / 1e9
-                        }
-                        
-                        if filter_pool(pool_data):
-                            filtered_pools.append(pool_data)
-                            
-                    except Exception as e:
-                        logger.error(f"Ошибка декодирования пула: {e}")
-                        continue
+                        data = await resp.json()
+                        if "error" in data:
+                            logger.error(f"API Error from {rpc_url}: {data['error']}")
+                            continue
 
-                logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
-                return filtered_pools
+                        results = data.get("result", [])
+                        logger.info(f"Всего найдено пулов: {len(results)}")
+                        
+                        filtered_pools = []
+                        for acc in results:
+                            try:
+                                account_data = acc.get("account", {})
+                                
+                                pool_data = {
+                                    "address": acc.get("pubkey", ""),
+                                    "mint_x": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("mintX", ""),
+                                    "mint_y": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("mintY", ""),
+                                    "liquidity": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("liquidity", 0),
+                                    "bin_step": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("binStep", 0),
+                                    "base_fee": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("baseFee", 0) / 10000,
+                                    "tvl_sol": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("liquidity", 0) / 1e9
+                                }
+                                
+                                if filter_pool(pool_data):
+                                    filtered_pools.append(pool_data)
+                                    
+                            except Exception as e:
+                                logger.error(f"Ошибка декодирования пула: {e}")
+                                continue
+
+                        logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
+                        return filtered_pools
+
+                except Exception as e:
+                    logger.error(f"Ошибка с RPC {rpc_url}: {e}")
+                    continue
+
+        logger.error("Все RPC эндпоинты недоступны")
+        return []
 
     except Exception as e:
         logger.error(f"Ошибка получения пулов: {e}")
