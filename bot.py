@@ -442,6 +442,13 @@ async def startup_sequence():
         await application.start()
         logger.info("✅ Бот успешно инициализирован")
 
+        logger.info("Проверка Helius API...")
+        test_pools = await fetch_dlmm_pools()
+        if not test_pools:
+            logger.warning("Не удалось получить пулы через Helius, пробуем fallback")
+            test_pools = await fetch_dlmm_pools_fallback()
+        logger.info(f"Тестовый запрос вернул {len(test_pools)} пулов")
+
         # 5. Запуск мониторинга 
         asyncio.create_task(monitor_pools())
         logger.info("DLMM Pool Monitor запущен через DAS API")
