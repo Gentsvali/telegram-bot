@@ -264,43 +264,38 @@ async def fetch_dlmm_pools():
     """Корректный запрос пулов DLMM"""
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
-
-        # Правильный формат запроса согласно документации [(1)](https://solana.com/developers/guides/javascript/get-program-accounts)
-        response = await solana_client.get_program_accounts(
-            METEORA_PROGRAM_ID,
+        
+        # Создаем фильтры для getProgramAccounts
+        filters = [
             {
-                "encoding": "base64",
-                "commitment": "confirmed", 
-                "filters": [
-                    {
-                        "dataSize": 752
-                    }
-                ]
+                "dataSize": 752  # Размер данных DLMM пула
             }
+        ]
+
+        # Получаем аккаунты с фильтрами
+        accounts = await solana_client.get_program_accounts(
+            METEORA_PROGRAM_ID,  # Используем pubkey напрямую
+            filters=filters,
+            encoding="base64"
         )
 
-        if not response:
+        if not accounts:
             logger.info("Пулы не найдены")
             return []
 
-        logger.info(f"Всего найдено пулов: {len(response)}")
+        logger.info(f"Всего найдено пулов: {len(accounts)}")
         
         filtered_pools = []
-        for acc in response:
+        for acc in accounts:
             try:
-                # Получаем данные аккаунта
-                account_data = acc.get('account', {}).get('data', [''])[0]
-                if not account_data:
-                    continue
-                    
-                # Декодируем base64 данные
-                data = base64.b64decode(account_data)
+                # Декодируем данные аккаунта
+                data = base64.b64decode(acc.account.data)
                 
-                # Создаем объект с данными пула
+                # Извлекаем данные пула
                 pool_data = {
-                    "address": str(acc.get('pubkey', '')),
-                    "mint_x": str(data[0:32].hex()),
-                    "mint_y": str(data[32:64].hex()),
+                    "address": str(acc.pubkey),
+                    "mint_x": str(PublicKey(data[0:32])),
+                    "mint_y": str(PublicKey(data[32:64])),
                     "liquidity": int.from_bytes(data[64:72], "little"),
                     "bin_step": int.from_bytes(data[88:90], "little"),
                     "base_fee": int.from_bytes(data[90:92], "little") / 10000,
