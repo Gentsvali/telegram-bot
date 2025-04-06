@@ -5,7 +5,7 @@ import aiohttp
 import json
 import signal
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from quart import Quart, request
 
@@ -245,65 +245,75 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Регистрируем обработчик ошибок
 application.add_error_handler(error_handler)
 
-async def monitor_pools():
+async def monitor_pools_v2():
+    """Улучшенный мониторинг пулов"""
     global known_pools
+    
+    logger.info("🔄 Мониторинг DLMM пулов активирован")
+    failure_count = 0
     
     while True:
         try:
-            # Пробуем основной метод
-            pools = await fetch_dlmm_pools()
+            pools = await fetch_dlmm_pools_v3()
             
-            # Если не сработало - пробуем fallback
             if not pools:
-                pools = await fetch_dlmm_pools_fallback()
-                if not pools:
-                    logger.warning("Не удалось получить пулы ни одним методом")
-                    await asyncio.sleep(300)
-                    continue
-            
+                failure_count += 1
+                if failure_count > 3:
+                    logger.error("🔴 Критическое количество неудачных попыток")
+                    break
+                await asyncio.sleep(60)
+                continue
+                
+            failure_count = 0
             new_pools = [p for p in pools if p["id"] not in known_pools]
             
-            if not new_pools:
-                logger.debug("Новых пулов не обнаружено")
-                await asyncio.sleep(300)
-                continue
-            
-            logger.info(f"🆕 Найдено {len(new_pools)} новых пулов")
-            for pool in new_pools:
-                try:
-                    pool_data = await parse_pool_data(pool)
-                    if pool_data and filter_pool(pool_data):
-                        known_pools.add(pool["id"])
-                        await send_pool_notification(pool_data)
-                except Exception as e:
-                    logger.error(f"⚠️ Ошибка обработки пула: {str(e)}")
+            if new_pools:
+                logger.info(f"🆕 Новые пулы: {len(new_pools)}")
+                for pool in new_pools:
+                    try:
+                        pool_data = await parse_pool_data(pool)
+                        if pool_data and filter_pool(pool_data):
+                            known_pools.add(pool["id"])
+                            await send_pool_notification(pool_data)
+                    except Exception as e:
+                        logger.error(f"⚠️ Ошибка обработки пула: {str(e)}")
             
             await asyncio.sleep(300)
             
         except asyncio.CancelledError:
+            logger.info("🛑 Мониторинг остановлен по запросу")
             break
         except Exception as e:
-            logger.error(f"🔴 Критическая ошибка мониторинга: {str(e)}")
+            logger.error(f"🔴 Ошибка мониторинга: {str(e)}")
             await asyncio.sleep(60)
 
-async def fetch_dlmm_pools_fallback():
-    """Резервный метод получения пулов"""
+async def fetch_dlmm_pools_v3():
+    """Современный метод получения пулов через Helius DAS API"""
     try:
-        logger.info("🔄 Пробуем альтернативный метод получения пулов...")
+        logger.info("🔍 Запрос DLMM пулов через getAssetsByGroup...")
         
-        # Получаем список всех активов, связанных с программой Meteora
         payload = {
             "jsonrpc": "2.0",
-            "id": "dlmm-fallback",
-            "method": "getAssetsByAuthority",
+            "id": "dlmm-v3",
+            "method": "getAssetsByGroup",
             "params": {
-                "authorityAddress": str(METEORA_PROGRAM_ID),
+                "groupKey": "collection",
+                "groupValue": "DLMM Pool",
                 "page": 1,
-                "limit": 1000
+                "limit": 500,
+                "displayOptions": {
+                    "showCollectionMetadata": True,
+                    "showUnverifiedCollections": True
+                }
             }
         }
 
-        async with aiohttp.ClientSession() as session:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {os.getenv('HELIUS_API_KEY')}"
+        }
+
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.post(
                 HELIUS_RPC_URL,
                 json=payload,
@@ -311,10 +321,16 @@ async def fetch_dlmm_pools_fallback():
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    return data.get("result", {}).get("items", [])
+                    if data.get("result"):
+                        pools = data["result"].get("items", [])
+                        logger.info(f"Получено {len(pools)} пулов")
+                        return pools
+                    logger.error(f"Пустой результат: {data}")
+                else:
+                    logger.error(f"HTTP {resp.status}: {await resp.text()}")
         return []
     except Exception as e:
-        logger.error(f"Ошибка fallback метода: {str(e)}")
+        logger.error(f"Ошибка fetch_dlmm_pools_v3: {str(e)}")
         return []
 
 async def sort_pool_accounts(accounts):
@@ -421,41 +437,38 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup_sequence():
-    """Выполняет последовательность запуска."""
+    """Последовательность запуска с проверкой всех компонентов"""
     try:
         # 1. Проверка подключения к Solana
-        logger.info("🔌 Проверяем подключение к Solana...")
+        logger.info("🔌 Проверка подключения к Solana...")
         if not await init_solana():
-            return False
+            raise ConnectionError("Не удалось подключиться к Solana")
 
-        # 2. Загрузка фильтров
-        logger.info("📥 Загрузка фильтров...")
+        # 2. Проверка Helius API
+        logger.info("🔍 Тестирование Helius API...")
+        test_pools = await fetch_dlmm_pools_v3()
+        if not test_pools:
+            logger.warning("⚠️ Не удалось получить тестовые пулы")
+        else:
+            logger.info(f"✅ Тест API успешен, получено {len(test_pools)} пулов")
+
+        # 3. Загрузка фильтров
+        logger.info("⚙️ Загрузка фильтров...")
         await load_filters()
-        
-        # 3. Получение и сортировка пулов
-        accounts = await fetch_dlmm_pools()
-        sorted_accounts = await sort_pool_accounts(accounts)
         
         # 4. Инициализация бота
         logger.info("🤖 Инициализация бота...")
         await application.initialize()
         await application.start()
-        logger.info("✅ Бот успешно инициализирован")
-
-        logger.info("Проверка Helius API...")
-        test_pools = await fetch_dlmm_pools()
-        if not test_pools:
-            logger.warning("Не удалось получить пулы через Helius, пробуем fallback")
-            test_pools = await fetch_dlmm_pools_fallback()
-        logger.info(f"Тестовый запрос вернул {len(test_pools)} пулов")
-
-        # 5. Запуск мониторинга 
-        asyncio.create_task(monitor_pools())
-        logger.info("DLMM Pool Monitor запущен через DAS API")
+        
+        # 5. Запуск мониторинга
+        logger.info("🚀 Запуск мониторинга пулов...")
+        asyncio.create_task(monitor_pools_v2())
+        
         return True
-
+        
     except Exception as e:
-        logger.error(f"💥 Критическая ошибка при запуске: {e}")
+        logger.error(f"💥 Ошибка запуска: {str(e)}")
         return False
 
 @app.after_serving
@@ -1275,6 +1288,9 @@ async def home():
         return {"status": "error"}, 500
 
 if __name__ == "__main__":
+     # Проверка что все функции определены
+    assert 'fetch_dlmm_pools_v3' in globals(), "Функция не определена"
+    assert 'monitor_pools_v2' in globals(), "Функция не определена"
     try:
         # Запускаем основную последовательность
         if asyncio.run(startup_sequence()):
