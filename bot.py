@@ -595,11 +595,10 @@ async def poll_program_accounts():
         while True:
             try:
                 # Создаем фильтры для getProgramAccounts
-                filters=[
-  {
-    dataSize: LIQUIDITY_STATE_LAYOUT_V4_SPAN  // Размер данных должен быть числом
-  }
-]
+                filters = [
+                    {
+                        "dataSize": LIQUIDITY_STATE_LAYOUT_V4_SPAN  # Размер данных должен быть числом
+                    }
                 ]
                 
                 # Получаем аккаунты с фильтрами
@@ -607,7 +606,7 @@ async def poll_program_accounts():
                     pubkey=METEORA_PROGRAM_ID,
                     filters=filters,
                     encoding="base64",
-                    commitment="confirmed"  # Используем confirmed для скорости [(1)](https://solana.stackexchange.com/questions/8608/faster-method-to-retrieve-pool-keys-raydium)
+                    commitment="confirmed"
                 )
 
                 if accounts:
