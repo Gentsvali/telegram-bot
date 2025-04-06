@@ -271,7 +271,7 @@ async def fetch_dlmm_pools():
             "id": 1,
             "method": "getProgramAccounts",
             "params": [
-                METEORA_PROGRAM_ID.to_string(), # Convert Pubkey to string
+                str(METEORA_PROGRAM_ID), # Convert Pubkey to string using str()
                 {
                     "encoding": "jsonParsed",
                     "commitment": "confirmed",
@@ -282,7 +282,7 @@ async def fetch_dlmm_pools():
                         {
                             "memcmp": {
                                 "offset": 0,
-                                "bytes": METEORA_PROGRAM_ID.to_string() # Convert Pubkey to string
+                                "bytes": str(METEORA_PROGRAM_ID) # Convert Pubkey to string using str()
                             }
                         }
                     ]
