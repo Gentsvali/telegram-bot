@@ -1,18 +1,22 @@
 import os
-import asyncio
 import logging
-from quart import Quart
-from telegram.ext import ApplicationBuilder
+import asyncio
+from quart import Quart, request, jsonify
 from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters
+)
 import aiohttp
 from solders.pubkey import Pubkey
 
 # Настройка логов
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -25,9 +29,13 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
 USER_ID = int(os.getenv("USER_ID", 0))
 METEORA_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Например: https://ваш-домен.xyz/bot
+
+# Инициализация Telegram бота
+bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 async def fetch_dlmm_pools():
-    """Получение пулов через Helius API"""
+    """Получение DLMM пулов через Helius API"""
     try:
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         payload = {
@@ -53,7 +61,7 @@ async def fetch_dlmm_pools():
         return []
 
 async def monitor_pools():
-    """Основной цикл мониторинга"""
+    """Фоновая задача мониторинга пулов"""
     while app.running:
         try:
             pools = await fetch_dlmm_pools()
@@ -73,46 +81,65 @@ async def monitor_pools():
             await asyncio.sleep(60)
 
 async def send_notification(pool_id):
-    """Отправка уведомления в Telegram"""
+    """Отправка уведомления о новом пуле"""
     try:
-        message = f"🆕 Новый DLMM пул: {pool_id}\n" \
-                  f"🔗 Explorer: https://solscan.io/account/{pool_id}"
+        message = (
+            "🆕 Обнаружен новый DLMM пул!\n"
+            f"• ID: `{pool_id}`\n"
+            f"• [Просмотр в Explorer](https://solscan.io/account/{pool_id})\n"
+            f"• [Meteora](https://app.meteora.ag/pool/{pool_id})"
+        )
         
-        await app.bot.bot.send_message(
+        await bot.bot.send_message(
             chat_id=USER_ID,
-            text=message
+            text=message,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
         )
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления: {e}")
 
 @app.before_serving
 async def startup():
-    """Инициализация при запуске"""
+    """Инициализация при запуске сервера"""
     app.running = True
     
-    # Инициализация Telegram бота
-    app.bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    await app.bot.initialize()
+    # Настройка вебхука
+    await bot.bot.set_webhook(url=WEBHOOK_URL)
     
     # Запуск мониторинга
     asyncio.create_task(monitor_pools())
-    logger.info("✅ Сервис запущен")
+    logger.info(f"✅ Вебхук установлен на {WEBHOOK_URL}")
 
 @app.after_serving
 async def shutdown():
-    """Корректное завершение"""
+    """Корректное завершение работы"""
     app.running = False
-    if hasattr(app, 'bot'):
-        await app.bot.shutdown()
+    await bot.bot.delete_webhook()
+    logger.info("🛑 Вебхук удален")
+
+@app.route('/bot', methods=['POST'])
+async def webhook():
+    """Обработчик вебхука от Telegram"""
+    if request.method == "POST":
+        data = await request.get_json()
+        update = Update.de_json(data, bot.bot)
+        await bot.process_update(update)
+    return jsonify({"status": "ok"}), 200
 
 @app.route('/')
-async def home():
-    return {"status": "running", "pools_tracking": len(known_pools)}
+async def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "running",
+        "webhook": WEBHOOK_URL is not None,
+        "pools_tracked": len(known_pools)
+    })
 
 if __name__ == '__main__':
-    try:
-        app.run(host='0.0.0.0', port=10000)
-    except KeyboardInterrupt:
-        logger.info("Завершение работы")
-    except Exception as e:
-        logger.error(f"Ошибка запуска: {e}")
+    # Регистрация обработчиков команд
+    bot.add_handler(CommandHandler("start", start))
+    bot.add_handler(CommandHandler("status", status))
+    
+    # Запуск приложения
+    app.run(host='0.0.0.0', port=10000)
