@@ -259,33 +259,71 @@ async def monitor_pools():
         logger.info("Мониторинг завершен")
 
 async def fetch_dlmm_pools() -> list:
-    """Запрашивает пулы DLMM через DAS API"""
+    """Запрашивает пулы DLMM через DAS API с обработкой ошибок"""
     try:
-        logger.debug(f"Отправка запроса к {HELIUS_RPC_URL}")
+        # Логирование начала запроса
+        logger.info(f"🔍 Начало запроса пулов DLMM от {METEORA_PROGRAM_ID}")
+        
+        # Формирование корректного payload
         payload = {
             "jsonrpc": "2.0",
-            "id": "1",
+            "id": "dlmm_pools_request",
             "method": "getAssetsByCreator",
             "params": {
                 "creatorAddress": str(METEORA_PROGRAM_ID),
-                "onlyVerified": True,
+                "onlyVerified": False,  # Изменено для получения всех пулов
                 "page": 1,
-                "limit": 1000  # Максимальный лимит
+                "limit": 1000
             }
         }
+
+        # Создание сессии с таймаутами
+        timeout_config = aiohttp.ClientTimeout(
+            total=15,
+            connect=5,
+            sock_connect=5,
+            sock_read=10
+        )
         
-        async with aiohttp.ClientSession() as session:
-            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get("result", {}).get("items", [])
-                else:
-                    logger.error(f"Ошибка HTTP {resp.status}: {await resp.text()}")
+        async with aiohttp.ClientSession(
+            timeout=timeout_config,
+            headers={"Content-Type": "application/json"}
+        ) as session:
+            # Отправка запроса
+            async with session.post(
+                HELIUS_RPC_URL,
+                json=payload,
+                raise_for_status=True
+            ) as response:
+                # Парсинг JSON ответа
+                response_data = await response.json()
+                
+                # Проверка структуры ответа
+                if "result" not in response_data:
+                    logger.error("⚠️ Некорректный формат ответа: отсутствует 'result'")
                     return []
-                    
+                
+                # Извлечение items с проверкой типа
+                items = response_data["result"].get("items", [])
+                if not isinstance(items, list):
+                    logger.error("🚫 Ошибка формата: items не является списком")
+                    return []
+                
+                logger.success(f"✅ Успешно получено {len(items)} пулов")
+                return items
+
+    except aiohttp.ClientResponseError as e:
+        logger.error(f"🌐 Ошибка HTTP {e.status}: {e.message}")
+    except aiohttp.ClientConnectionError as e:
+        logger.error(f"🔌 Ошибка подключения: {str(e)}")
+    except json.JSONDecodeError as e:
+        logger.error(f"📄 Ошибка декодирования JSON: {str(e)}")
+    except KeyError as e:
+        logger.error(f"🔑 Отсутствует ключ в ответе: {str(e)}")
     except Exception as e:
-        logger.error(f"Ошибка запроса к DAS API: {e}")
-        return []
+        logger.error(f"💥 Необработанная ошибка: {str(e)}", exc_info=True)
+    
+    return []
 
 async def parse_pool_data(pool: dict) -> Optional[dict]:
     """Извлекает ключевые данные из структуры пула"""
@@ -377,6 +415,8 @@ async def startup_sequence():
 @app.after_serving
 async def shutdown_handler():
     """Корректно завершает все соединения"""
+    global monitoring_active
+    monitoring_active = False  # Флаг для остановки мониторинга
     try:
         logger.info("🛑 Начало корректного завершения работы...")
         # Останавливаем мониторинг
