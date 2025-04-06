@@ -1,60 +1,45 @@
 import os
-import aiohttp
-import asyncio
-import json
+import logging
+from quart import Quart
+from telegram.ext import ApplicationBuilder
 
-async def test_helius_connection():
-    """Тестовый запрос к Helius API"""
-    # Получаем API ключ из переменных окружения
-    api_key = os.getenv("HELIUS_API_KEY")
-    if not api_key:
-        print("❌ HELIUS_API_KEY не найден в переменных окружения")
-        print("Добавьте его через: export HELIUS_API_KEY='ваш_ключ'")
-        return
+# Настройка логов
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
-    # Формируем базовый URL
-    helius_url = f"https://mainnet.helius-rpc.com/?api-key={api_key}"
+# Создаем Quart приложение (обязательно должно называться app)
+app = Quart(__name__)
+
+# Конфигурация (замените на свои значения)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+USER_ID = int(os.getenv("USER_ID", 0))
+
+@app.before_serving
+async def startup():
+    """Инициализация при запуске"""
+    logger.info("Инициализация бота...")
     
-    # Простейший тестовый запрос (не связанный с DLMM)
+    # Создаем Telegram бота
+    app.bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    await app.bot.initialize()
+    
+    logger.info("✅ Бот готов к работе")
+
+@app.route('/')
+async def home():
+    """Проверочный маршрут"""
+    return {"status": "active", "bot": "DLMM Monitor"}
+
+async def fetch_pools():
+    """Минимальный запрос к Helius API"""
+    url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     payload = {
         "jsonrpc": "2.0",
-        "id": "connection-test",
-        "method": "getVersion"
-    }
-
-    print(f"🔍 Тестируем подключение к Helius API...")
-    print(f"URL: {helius_url.split('?')[0]}...")  # Не показываем ключ в логах
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(helius_url, json=payload, timeout=10) as resp:
-                data = await resp.json()
-                
-                if "result" in data:
-                    print("✅ Подключение успешно!")
-                    print(f"Версия RPC: {data['result']['solana-core']}")
-                    return True
-                else:
-                    print("❌ Ошибка подключения:")
-                    print(json.dumps(data, indent=2))
-                    return False
-                    
-    except Exception as e:
-        print(f"🚨 Ошибка при подключении: {str(e)}")
-        return False
-
-async def test_dlmm_fetch():
-    """Тестовый запрос для DLMM пулов"""
-    api_key = os.getenv("HELIUS_API_KEY")
-    if not api_key:
-        return
-
-    helius_url = f"https://mainnet.helius-rpc.com/?api-key={api_key}"
-    
-    # Правильный запрос для DLMM пулов
-    payload = {
-        "jsonrpc": "2.0",
-        "id": "dlmm-test",
+        "id": "pool-fetch",
         "method": "getAssetsByAuthority",
         "params": {
             "authorityAddress": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
@@ -62,39 +47,28 @@ async def test_dlmm_fetch():
             "limit": 3
         }
     }
-
-    print("\n🔍 Тестируем запрос DLMM пулов...")
     
+    async with app.session.get(url, json=payload) as resp:
+        return await resp.json()
+
+@app.route('/health')
+async def health_check():
+    """Проверка работоспособности"""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(helius_url, json=payload, timeout=15) as resp:
-                data = await resp.json()
-                
-                if "result" in data:
-                    pools = data["result"].get("items", [])
-                    print(f"✅ Найдено пулов: {len(pools)}")
-                    if pools:
-                        print("Пример пула:", json.dumps(pools[0]["id"], indent=2))
-                    return True
-                else:
-                    print("❌ Ошибка при запросе пулов:")
-                    print(json.dumps(data.get("error", {}), indent=2))
-                    return False
-                    
+        pools = await fetch_pools()
+        return {
+            "status": "ok",
+            "pools": bool(pools.get("result"))
+        }
     except Exception as e:
-        print(f"🚨 Ошибка: {str(e)}")
-        return False
+        return {"status": "error", "reason": str(e)}, 500
 
-async def main():
-    """Точка входа"""
-    print("\n=== ТЕСТ HELIUS API ===")
-    
-    # 1. Проверка базового подключения
-    if not await test_helius_connection():
-        return
-    
-    # 2. Проверка запроса пулов
-    await test_dlmm_fetch()
+@app.after_serving
+async def shutdown():
+    """Корректное завершение"""
+    if hasattr(app, 'bot'):
+        await app.bot.shutdown()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__':
+    # Для локального тестирования
+    app.run(host='0.0.0.0', port=10000)
