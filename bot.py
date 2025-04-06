@@ -261,79 +261,46 @@ async def monitor_pools():
         logger.info("📴 Мониторинг завершил работу")
 
 async def fetch_dlmm_pools():
-    """Корректный запрос пулов DLMM"""
+    """Получение пулов через DAS API"""
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Создаем правильный RPC запрос согласно документации
-        payload = {
-            "jsonrpc": "2.0", 
-            "id": 1,
-            "method": "getProgramAccounts",
-            "params": [
-                str(METEORA_PROGRAM_ID),
-                {
-                    "encoding": "base64",
-                    "commitment": "confirmed",
-                    "filters": [
-                        {
-                            "dataSize": 752
-                        }
-                    ]
+        # Используем DAS API
+        response = await umi.rpc.searchAssets({
+            "owner": METEORA_PROGRAM_ID,
+            "tokenType": "fungible",
+            "compressed": True,
+            "limit": 1000
+        })
+
+        if not response:
+            logger.error("Нет ответа от DAS API")
+            return []
+
+        pools = []
+        for asset in response:
+            try:
+                pool_data = {
+                    "id": asset.id,
+                    "mint_x": asset.content.mint_x,
+                    "mint_y": asset.content.mint_y,
+                    "liquidity": int(asset.content.liquidity),
+                    "bin_step": int(asset.content.bin_step),
+                    "base_fee": float(asset.content.base_fee),
+                    "tvl_sol": float(asset.content.liquidity) / 1e9
                 }
-            ]
-        }
+                pools.append(pool_data)
+                logger.info(f"Найден пул: {pool_data}")
+            except Exception as e:
+                logger.error(f"Ошибка декодирования пула: {e}")
+                continue
 
-        # Сначала попробуем с официальным RPC
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://api.mainnet-beta.solana.com", json=payload, headers={"Content-Type": "application/json"}) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if "result" in data:
-                        results = data["result"]
-                        logger.info(f"Всего найдено пулов: {len(results)}")
-                        
-                        # Выводим детальную информацию о результате
-                        logger.info(f"Полный ответ RPC: {data}")
-                        
-                        filtered_pools = []
-                        for acc in results:
-                            try:
-                                # Декодируем данные аккаунта
-                                data = base64.b64decode(acc['account']['data'][0])
-                                
-                                pool_data = {
-                                    "address": acc['pubkey'],
-                                    "mint_x": str(PublicKey(data[0:32])),
-                                    "mint_y": str(PublicKey(data[32:64])),
-                                    "liquidity": int.from_bytes(data[64:72], "little"),
-                                    "bin_step": int.from_bytes(data[88:90], "little"),
-                                    "base_fee": int.from_bytes(data[90:92], "little") / 10000,
-                                    "tvl_sol": int.from_bytes(data[64:72], "little") / 1e9
-                                }
-                                
-                                # Выводим данные каждого найденного пула
-                                logger.info(f"Найден пул: {pool_data}")
-                                
-                                if filter_pool(pool_data):
-                                    filtered_pools.append(pool_data)
-                                    
-                            except Exception as e:
-                                logger.error(f"Ошибка декодирования пула: {e}")
-                                continue
-
-                        logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
-                        return filtered_pools
-                else:
-                    logger.error(f"Ошибка RPC: {resp.status}")
-                    return []
+        logger.info(f"Всего найдено пулов: {len(pools)}")
+        return pools
 
     except Exception as e:
         logger.error(f"Ошибка получения пулов: {e}")
         return []
-
-# Давайте также проверим сам METEORA_PROGRAM_ID
-logger.info(f"METEORA_PROGRAM_ID: {str(METEORA_PROGRAM_ID)}")
 
 async def sort_pool_accounts(accounts):
     """Сортировка аккаунтов пулов по названию"""
