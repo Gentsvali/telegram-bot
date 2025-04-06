@@ -271,19 +271,13 @@ async def fetch_dlmm_pools():
             "id": 1,
             "method": "getProgramAccounts",
             "params": [
-                str(METEORA_PROGRAM_ID), # Convert Pubkey to string using str()
+                str(METEORA_PROGRAM_ID),
                 {
-                    "encoding": "jsonParsed",
+                    "encoding": "base64", # Changed back to base64 per docs
                     "commitment": "confirmed",
                     "filters": [
                         {
-                            "dataSize": 752
-                        },
-                        {
-                            "memcmp": {
-                                "offset": 0,
-                                "bytes": str(METEORA_PROGRAM_ID) # Convert Pubkey to string using str()
-                            }
+                            "dataSize": 752  # Оставляем только размер данных
                         }
                     ]
                 }
@@ -295,52 +289,52 @@ async def fetch_dlmm_pools():
         }
 
         async with aiohttp.ClientSession() as session:
-            # Try each RPC endpoint until successful
-            for rpc_url in RPC_ENDPOINTS:
-                try:
-                    async with session.post(rpc_url, json=payload, headers=headers) as resp:
-                        if resp.status != 200:
-                            continue
-                            
-                        data = await resp.json()
-                        if "error" in data:
-                            logger.error(f"API Error from {rpc_url}: {data['error']}")
-                            continue
+            async with session.post(HELIUS_RPC_URL, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    logger.error(f"HTTP Error: {resp.status}")
+                    return []
+                    
+                data = await resp.json()
+                if "error" in data:
+                    logger.error(f"API Error: {data['error']}")
+                    return []
 
-                        results = data.get("result", [])
-                        logger.info(f"Всего найдено пулов: {len(results)}")
+                results = data.get("result", [])
+                logger.info(f"Всего найдено пулов: {len(results)}")
+                
+                # Сначала выводим все найденные пулы для проверки
+                logger.info("Найденные пулы:")
+                for acc in results:
+                    logger.info(f"Pubkey: {acc.get('pubkey', '')}")
+
+                filtered_pools = []
+                for acc in results:
+                    try:
+                        # Декодируем данные аккаунта
+                        data = base64.b64decode(acc['account']['data'][0])
                         
-                        filtered_pools = []
-                        for acc in results:
-                            try:
-                                account_data = acc.get("account", {})
-                                
-                                pool_data = {
-                                    "address": acc.get("pubkey", ""),
-                                    "mint_x": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("mintX", ""),
-                                    "mint_y": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("mintY", ""),
-                                    "liquidity": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("liquidity", 0),
-                                    "bin_step": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("binStep", 0),
-                                    "base_fee": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("baseFee", 0) / 10000,
-                                    "tvl_sol": account_data.get("data", {}).get("parsed", {}).get("info", {}).get("liquidity", 0) / 1e9
-                                }
-                                
-                                if filter_pool(pool_data):
-                                    filtered_pools.append(pool_data)
-                                    
-                            except Exception as e:
-                                logger.error(f"Ошибка декодирования пула: {e}")
-                                continue
+                        pool_data = {
+                            "address": acc['pubkey'],
+                            "mint_x": str(PublicKey(data[0:32])),
+                            "mint_y": str(PublicKey(data[32:64])),
+                            "liquidity": int.from_bytes(data[64:72], "little"),
+                            "bin_step": int.from_bytes(data[88:90], "little"),
+                            "base_fee": int.from_bytes(data[90:92], "little") / 10000,
+                            "tvl_sol": int.from_bytes(data[64:72], "little") / 1e9
+                        }
+                        
+                        # Выводим данные пула до фильтрации
+                        logger.info(f"Данные пула до фильтрации: {pool_data}")
+                        
+                        if filter_pool(pool_data):
+                            filtered_pools.append(pool_data)
+                            
+                    except Exception as e:
+                        logger.error(f"Ошибка декодирования пула: {e}")
+                        continue
 
-                        logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
-                        return filtered_pools
-
-                except Exception as e:
-                    logger.error(f"Ошибка с RPC {rpc_url}: {e}")
-                    continue
-
-        logger.error("Все RPC эндпоинты недоступны")
-        return []
+                logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
+                return filtered_pools
 
     except Exception as e:
         logger.error(f"Ошибка получения пулов: {e}")
