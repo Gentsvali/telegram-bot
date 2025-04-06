@@ -136,6 +136,29 @@ def validate_filters(filters: dict) -> bool:
         logger.error(f"Ошибка валидации фильтров: {e}")
         return False
 
+async def get_asset_info(asset_id: str) -> Optional[dict]:
+    """Получает информацию об активе через Helius DAS API"""
+    try:
+        url = f"{HELIUS_RPC_URL}?api-key={os.getenv('HELIUS_API_KEY')}"
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "getAsset",
+            "params": {"id": asset_id}
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("result", {})
+                logger.error(f"Ошибка Helius API: {resp.status}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Ошибка get_asset_info: {e}")
+        return None
+
 async def load_filters():
     """Загружает фильтры из файла или использует значения по умолчанию"""
     global current_filters
@@ -335,22 +358,35 @@ async def sort_pool_accounts(accounts):
         return accounts
 
 async def parse_pool_data(pool: dict) -> Optional[dict]:
-    """Извлекает ключевые данные из структуры пула"""
+    """Извлекает ключевые данные из структуры пула с доп. информацией от Helius"""
     if not isinstance(pool, dict):
         logger.error("Некорректные данные пула: ожидался словарь")
         return None
+        
     try:
-        # Основные данные
+        # Основные данные из Solana RPC
+        pool_id = pool.get("id")
+        if not pool_id:
+            return None
+            
+        # Получаем дополнительные данные из Helius
+        asset_info = await get_asset_info(pool_id)
+        
+        # Обрабатываем метаданные
         metadata = pool.get("content", {}).get("metadata", {})
+        if asset_info:
+            metadata.update(asset_info.get("content", {}).get("metadata", {}))
+            
         return {
-            "id": pool["id"],
+            "id": pool_id,
             "name": metadata.get("name"),
             "symbol": metadata.get("symbol"),
             "tvl": float(metadata.get("tvl", 0)),
             "fee_rate": float(metadata.get("fee_rate", 0)),
             "volume_24h": float(metadata.get("volume_24h", 0)),
             "mint_x": next((a["mint"] for a in pool.get("token_accounts", []) if a.get("type") == "token_x"), ""),
-            "mint_y": next((a["mint"] for a in pool.get("token_accounts", []) if a.get("type") == "token_y"), "")
+            "mint_y": next((a["mint"] for a in pool.get("token_accounts", []) if a.get("type") == "token_y"), ""),
+            "asset_info": asset_info  # Сохраняем полные данные от Helius
         }
     except Exception as e:
         logger.error(f"Ошибка парсинга пула: {e}")
@@ -1024,56 +1060,40 @@ def get_clean_filters() -> dict:
     return clean_filters
 
 def format_pool_message(pool: dict) -> str:
-    """
-    Форматирует данные пула в сообщение для Telegram.
-    
-    Args:
-        pool (dict): Словарь с данными пула
-        
-    Returns:
-        str: Отформатированное сообщение
-    """
+    """Форматирует данные пула в сообщение с учетом информации от Helius"""
     try:
-        # Проверяем обязательные поля
-        required = ["address", "mint_x", "mint_y", "liquidity", 
-                   "volume_1h", "volume_5m", "bin_step", "base_fee"]
-        if not all(field in pool for field in required):
-            logger.error("Отсутствуют обязательные поля пула")
-            return None
-
-        # Получаем и проверяем значения
-        tvl = float(pool.get("liquidity", 0)) / 1e9
-        volume_1h = float(pool.get("volume_1h", 0)) / 1e9
-        volume_5m = float(pool.get("volume_5m", 0)) / 1e9
-        fees_1h = volume_1h * (float(pool.get("base_fee", 0)) / 100)
-        fees_5m = volume_5m * (float(pool.get("base_fee", 0)) / 100)
+        # Основные данные
+        name = pool.get("name", "Unknown")
+        symbol = pool.get("symbol", "?")
+        pool_id = pool.get("id", "")
+        tvl = pool.get("tvl", 0)
+        fee_rate = pool.get("fee_rate", 0)
+        volume_24h = pool.get("volume_24h", 0)
         
-        # Рассчитываем показатели
-        fee_tvl_24h = (fees_1h * 24 / tvl * 100) if tvl > 0 else 0
-        dynamic_fee_tvl = (fees_1h / tvl * 100) if tvl > 0 else 0
-
-        # Формируем сообщение
-        return (
-            f"⭐️Turtle⇆SOL 🔥<3h\n"
-            f"☄️Meteora (https://edge.meteora.ag/dlmm/{pool['address']}) "
-            f"⟨1 pool (https://meteoranavigator.com/en/pools?sort=liquidity_now&sort_order=desc&search={pool['mint_x']})⟩\n"
-            f"🐊gmgn (https://gmgn.ai/sol/token/{pool['mint_x']}) "
-            f"🦅Dexscreener (https://dexscreener.com/solana/{pool['address']})\n"
-            f"{pool['mint_x']}\n"
-            f"╔ TVL ➙ {tvl:.3f}$\n"
-            f"╟ Bin step ➙ {pool['bin_step']}\n"
-            f"╟ Base fee ➙ {pool['base_fee']:.1f}%\n"
-            f"╟ Fees 5min\\1h ➙ {fees_5m:.3f}$\\{fees_1h:.3f}$\n"
-            f"╟ Volume 5min\\1h ➙ {volume_5m:.3f}$\\{volume_1h:.3f}$\n"
-            f"╟ Fee 24h/TVL ➙ {fee_tvl_24h:.2f}%\n"
-            f"╚ Dynamic 1h fee/TVL ➙ {dynamic_fee_tvl:.2f}%"
+        # Дополнительные данные из Helius
+        asset_info = pool.get("asset_info", {})
+        creator = asset_info.get("authorities", [{}])[0].get("address", "") if asset_info else ""
+        
+        # Форматируем сообщение
+        message = (
+            f"🚀 *Новый DLMM Pool*: {name} ({symbol})\n"
+            f"• Адрес: `{pool_id}`\n"
+            f"• Создатель: `{creator}`\n"
+            f"• TVL: {tvl:.2f} SOL\n"
+            f"• Комиссия: {fee_rate:.2f}%\n"
+            f"• Объем (24ч): {volume_24h:.2f} SOL\n"
+            f"• [Meteora](https://app.meteora.ag/pool/{pool_id}) | "
+            f"[DexScreener](https://dexscreener.com/solana/{pool_id})"
         )
-
-    except (ValueError, TypeError) as e:
-        logger.error(f"Ошибка обработки данных пула: {e}")
-        return None
+        
+        # Добавляем ссылку на explorer если есть creator
+        if creator:
+            message += f" | [Explorer](https://solscan.io/account/{creator})"
+            
+        return message
+        
     except Exception as e:
-        logger.error(f"Непредвиденная ошибка: {e}")
+        logger.error(f"Ошибка форматирования сообщения: {e}")
         return None
 
 def setup_command_handlers(application: ApplicationBuilder):
