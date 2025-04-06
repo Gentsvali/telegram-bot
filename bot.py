@@ -26,8 +26,12 @@ import base58
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()]
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("bot.log")  # Добавьте запись в файл
+    ]
 )
+
 logger = logging.getLogger(__name__)
 
 logging.getLogger("asyncio").setLevel(logging.WARNING)
@@ -55,6 +59,7 @@ RPC_ENDPOINTS = [
 # Настройки Solana
 COMMITMENT = Confirmed
 METEORA_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
+known_pools = set()
 
 # Инициализация Solana клиента
 solana_client = AsyncClient("https://api.mainnet-beta.solana.com", Confirmed)
@@ -225,7 +230,9 @@ async def monitor_pools():
         while True:
             try:
                 # Запрашиваем пулы
+                logger.info("🔍 Проверяем новые пулы...")
                 pools = await fetch_dlmm_pools()
+                logger.info(f"📊 Найдено {len(pools)} пулов, проверяем новые...") 
                 new_pools = [p for p in pools if p["id"] not in known_pools]
                 
                 for pool in new_pools:
@@ -254,6 +261,7 @@ async def monitor_pools():
 async def fetch_dlmm_pools() -> list:
     """Запрашивает пулы DLMM через DAS API"""
     try:
+        logger.debug(f"Отправка запроса к {HELIUS_RPC_URL}")
         payload = {
             "jsonrpc": "2.0",
             "id": "1",
@@ -281,6 +289,9 @@ async def fetch_dlmm_pools() -> list:
 
 async def parse_pool_data(pool: dict) -> Optional[dict]:
     """Извлекает ключевые данные из структуры пула"""
+    if not isinstance(pool, dict):
+        logger.error("Некорректные данные пула: ожидался словарь")
+        return None
     try:
         # Основные данные
         metadata = pool.get("content", {}).get("metadata", {})
@@ -353,12 +364,8 @@ async def startup_sequence():
         await application.initialize()
         await application.start()
         logger.info("✅ Бот успешно инициализирован")
-        
-        # 4. Запуск мониторинга
-        asyncio.create_task(monitor_pools())
-        logger.info("🔌 Мониторинг запущен")
-
-       #  5. Запуск мониторинга 
+       
+       #  4. Запуск мониторинга 
         asyncio.create_task(monitor_pools())
         logger.info("DLMM Pool Monitor запущен через DAS API")
         return True
@@ -371,6 +378,13 @@ async def startup_sequence():
 async def shutdown_handler():
     """Корректно завершает все соединения"""
     try:
+        logger.info("🛑 Начало корректного завершения работы...")
+        # Останавливаем мониторинг
+        tasks = [t for t in asyncio.all_tasks() 
+                if t is not asyncio.current_task() and not t.done()]
+        for task in tasks:
+            task.cancel()
+        
         # Останавливаем бота
         if application.running:
             await application.stop()
@@ -378,11 +392,10 @@ async def shutdown_handler():
             
         # Закрываем Solana клиент    
         await solana_client.close()
-            
-        logger.info("Все соединения успешно закрыты")
         
+        logger.info("✅ Все соединения успешно закрыты")
     except Exception as e:
-        logger.error(f"Ошибка при завершении работы: {e}")
+        logger.error(f"Ошибка при завершении работы: {str(e)}", exc_info=True)
 
 async def shutdown_signal(signal, loop):
     """
