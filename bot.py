@@ -265,11 +265,7 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Проверяем METEORA_PROGRAM_ID
-        logger.info(f"Проверка METEORA_PROGRAM_ID: {METEORA_PROGRAM_ID}")
-        logger.info(f"Base58 расшифрован METEORA_PROGRAM_ID: {base58.b58decode(str(METEORA_PROGRAM_ID)).hex()}")
-        
-        # Создаем payload с множественными фильтрами
+        # Базовый запрос без фильтров
         payload = {
             "jsonrpc": "2.0",
             "id": "my-id",
@@ -277,20 +273,9 @@ async def fetch_dlmm_pools():
             "params": [
                 str(METEORA_PROGRAM_ID),
                 {
-                    "encoding": "base64",
+                    "encoding": "base64",  # используем base64 для больших данных [(1)](https://solana.com/docs/rpc/http/getprogramaccounts)
                     "commitment": "confirmed",
-                    "filters": [
-                        {
-                            "dataSize": 752
-                        },
-                        {
-                            "memcmp": {
-                                "offset": 32,  # Пропускаем первые 32 байта
-                                "bytes": base58.b58encode(bytes([1])).decode()  # Ищем маркер инициализации
-                            }
-                        }
-                    ],
-                    "withContext": True  # Добавляем контекст для дополнительной информации
+                    "withContext": True
                 }
             ]
         }
@@ -299,40 +284,17 @@ async def fetch_dlmm_pools():
             async with session.post(HELIUS_RPC_URL, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    logger.info(f"Полный ответ API: {data}")  # Логируем весь ответ
+                    logger.info(f"Полный ответ API: {data}")
                     
                     if "result" not in data:
                         logger.error(f"Неожиданный формат ответа: {data}")
                         return []
 
-                    context = data.get("result", {}).get("context", {})
                     accounts = data.get("result", {}).get("value", [])
+                    logger.info(f"Сырые данные аккаунтов: {accounts}")
                     
-                    logger.info(f"Контекст запроса: {context}")
-                    logger.info(f"Количество найденных аккаунтов: {len(accounts)}")
+                    return accounts
 
-                    pools = []
-                    for account in accounts:
-                        try:
-                            # Логируем сырые данные аккаунта
-                            logger.info(f"Сырые данные аккаунта: {account}")
-                            
-                            account_data = base64.b64decode(account['account']['data'][0])
-                            logger.info(f"Декодированные данные: {account_data[:100].hex()}")
-                            
-                            pool_data = {
-                                "address": account['pubkey'],
-                                "owner": account['account']['owner'],
-                                "data_len": len(account_data)
-                            }
-                            pools.append(pool_data)
-                            
-                        except Exception as e:
-                            logger.error(f"Ошибка декодирования пула: {str(e)}")
-                            continue
-
-                    logger.info(f"Всего найдено пулов: {len(pools)}")
-                    return pools
                 else:
                     logger.error(f"Ошибка API: {resp.status}")
                     logger.error(f"Текст ответа: {await resp.text()}")
