@@ -365,24 +365,37 @@ app = Quart(__name__)
 
 @app.before_serving
 async def startup_sequence():
+    """Выполняет последовательность запуска."""
     try:
-        # 1. Проверка Solana RPC
-        if not await check_solana_connection():
+        # 1. Проверка подключения к Solana
+        logger.info("🔌 Проверяем подключение к Solana...")
+        if not await init_solana():
             return False
 
         # 2. Загрузка фильтров
-        await load_filters()
-
-        # 3. Инициализация бота
-        await init_telegram_bot()
-
-        # 4. Запуск мониторинга (ТОЛЬКО ОДИН РАЗ)
-        asyncio.create_task(pool_monitor_job())
+        logger.info("📥 Загрузка фильтров...")
+        try:
+            if not os.path.exists(FILE_PATH):
+                logger.info("Используем фильтры по умолчанию")
+            else:
+                await load_filters()
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки фильтров: {e}")
+            return False
         
-        logger.info("🚀 Система мониторинга успешно запущена")
+        # 3. Инициализация бота
+        logger.info("🤖 Инициализация бота...")
+        await application.initialize()
+        await application.start()
+        logger.info("✅ Бот успешно инициализирован")
+
+        # 4. Запуск мониторинга 
+        asyncio.create_task(monitor_pools())
+        logger.info("DLMM Pool Monitor запущен через DAS API")
         return True
+
     except Exception as e:
-        logger.critical(f"🛑 Ошибка запуска: {str(e)}", exc_info=True)
+        logger.error(f"💥 Критическая ошибка при запуске: {e}")
         return False
 
 @app.after_serving
