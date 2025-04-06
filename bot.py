@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import aiohttp
 import json
 import signal
 from datetime import datetime
@@ -217,60 +218,119 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 application.add_error_handler(error_handler)
 
 async def monitor_pools():
-    """Мониторинг пулов с обработкой новых"""
+    """Мониторинг пулов через DAS API с использованием вашего Helius ключа"""
     global known_pools
     
     try:
         while True:
             try:
-                # Получаем все пулы
-                accounts = await get_pool_accounts()
+                # Запрашиваем пулы
+                pools = await fetch_dlmm_pools()
+                new_pools = [p for p in pools if p["id"] not in known_pools]
                 
-                if accounts:
-                    for account in accounts:
-                        try:
-                            # Проверяем, новый ли это пул
-                            pool_address = str(account.pubkey)
+                for pool in new_pools:
+                    try:
+                        pool_data = await parse_pool_data(pool)
+                        if pool_data and filter_pool(pool_data):
+                            known_pools.add(pool["id"])
+                            await send_pool_notification(pool_data)
                             
-                            # Пропускаем уже известные пулы
-                            if pool_address in known_pools:
-                                continue
-                                
-                            # Декодируем данные пула
-                            pool_data = decode_pool_data(account.account.data)
-                            
-                            # Проверяем соответствие фильтрам
-                            if pool_data and filter_pool(pool_data):
-                                # Добавляем адрес в известные
-                                known_pools.add(pool_address)
-                                
-                                # Форматируем и отправляем сообщение
-                                message = format_pool_message(pool_data)
-                                if message:
-                                    await application.bot.send_message(
-                                        chat_id=USER_ID,
-                                        text=message,
-                                        parse_mode="Markdown",
-                                        disable_web_page_preview=True
-                                    )
-                                    
-                        except Exception as e:
-                            logger.error(f"Ошибка обработки пула: {e}")
-                            continue
-                            
-                # Ждем 5 минут перед следующей проверкой
-                await asyncio.sleep(300)
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки пула {pool['id']}: {e}")
+                        continue
+                        
+                await asyncio.sleep(300)  # Интервал проверки (5 минут)
                 
             except asyncio.CancelledError:
                 logger.info("Мониторинг остановлен")
                 break
-                
             except Exception as e:
                 logger.error(f"Ошибка мониторинга: {e}")
-                await asyncio.sleep(300)  # Ждем 5 минут при ошибке
+                await asyncio.sleep(60)  # Ждем минуту при ошибке
                 
     finally:
         logger.info("Мониторинг завершен")
+
+async def fetch_dlmm_pools() -> list:
+    """Запрашивает пулы DLMM через DAS API"""
+    try:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "getAssetsByCreator",
+            "params": {
+                "creatorAddress": str(METEORA_PROGRAM_ID),
+                "onlyVerified": True,
+                "page": 1,
+                "limit": 1000  # Максимальный лимит
+            }
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("result", {}).get("items", [])
+                else:
+                    logger.error(f"Ошибка HTTP {resp.status}: {await resp.text()}")
+                    return []
+                    
+    except Exception as e:
+        logger.error(f"Ошибка запроса к DAS API: {e}")
+        return []
+
+async def parse_pool_data(pool: dict) -> Optional[dict]:
+    """Извлекает ключевые данные из структуры пула"""
+    try:
+        # Основные данные
+        metadata = pool.get("content", {}).get("metadata", {})
+        return {
+            "id": pool["id"],
+            "name": metadata.get("name"),
+            "symbol": metadata.get("symbol"),
+            "tvl": float(metadata.get("tvl", 0)),
+            "fee_rate": float(metadata.get("fee_rate", 0)),
+            "volume_24h": float(metadata.get("volume_24h", 0)),
+            "mint_x": next((a["mint"] for a in pool.get("token_accounts", []) if a["type"] == "token_x", ""),
+            "mint_y": next((a["mint"] for a in pool.get("token_accounts", []) if a["type"] == "token_y", "")
+        }
+    except Exception as e:
+        logger.error(f"Ошибка парсинга пула: {e}")
+        return None
+
+async def send_pool_notification(pool: dict):
+    """Отправляет сообщение о новом пуле"""
+    try:
+        message = (
+            f"🚀 *Новый DLMM Pool*: {pool['name']} ({pool['symbol']})\n"
+            f"• Адрес: `{pool['id']}`\n"
+            f"• TVL: {pool['tvl']:.2f} SOL\n"
+            f"• Комиссия: {pool['fee_rate']:.2f}%\n"
+            f"• Объем (24ч): {pool['volume_24h']:.2f} SOL\n"
+            f"• [Meteora](https://app.meteora.ag/pool/{pool['id']}) | "
+            f"[DexScreener](https://dexscreener.com/solana/{pool['id']})"
+        )
+        
+        await application.bot.send_message(
+            chat_id=USER_ID,
+            text=message,
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки уведомления: {e}")
+
+def filter_pool(pool: dict) -> bool:
+    """Применяет пользовательские фильтры"""
+    try:
+        return all([
+            pool["tvl"] >= current_filters["min_tvl"],
+            pool["fee_rate"] <= current_filters["base_fee_max"],
+            pool["volume_24h"] >= current_filters["volume_1h_min"] / 24  # Конвертация 1ч -> 24ч
+        ])
+    except Exception as e:
+        logger.error(f"Ошибка фильтрации: {e}")
+        return False
 
 # Инициализация Quart приложения
 app = Quart(__name__)
@@ -298,6 +358,9 @@ async def startup_sequence():
         asyncio.create_task(monitor_pools())
         logger.info("🔌 Мониторинг запущен")
 
+       #  5. Запуск мониторинга 
+        asyncio.create_task(monitor_pools())
+        logger.info("DLMM Pool Monitor запущен через DAS API")
         return True
 
     except Exception as e:
