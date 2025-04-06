@@ -597,7 +597,7 @@ async def poll_program_accounts():
                 # Создаем фильтры для getProgramAccounts
                 filters = [
                     {
-                        "dataSize": LIQUIDITY_STATE_LAYOUT_V4_SPAN  # Размер данных должен быть числом
+                        "dataSize": 752  # Размер данных DLMM пула
                     }
                 ]
                 
