@@ -286,45 +286,35 @@ async def monitor_pools():
             logger.error(f"🔴 Критическая ошибка мониторинга: {str(e)}")
             await asyncio.sleep(60)
 
-async def fetch_dlmm_pools():
-    """Альтернативный метод получения DLMM пулов через getAssetsByGroup"""
+async def fetch_dlmm_pools_fallback():
+    """Резервный метод получения пулов"""
     try:
-        logger.info("🔍 Ищем DLMM пулы через getAssetsByGroup...")
+        logger.info("🔄 Пробуем альтернативный метод получения пулов...")
         
+        # Получаем список всех активов, связанных с программой Meteora
         payload = {
             "jsonrpc": "2.0",
-            "id": "dlmm-fetcher",
-            "method": "getAssetsByGroup",
+            "id": "dlmm-fallback",
+            "method": "getAssetsByAuthority",
             "params": {
-                "groupKey": "collection",
-                "groupValue": "DLMM Pool",  # Или конкретный collection адрес
+                "authorityAddress": str(METEORA_PROGRAM_ID),
                 "page": 1,
                 "limit": 1000
             }
         }
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {os.getenv('HELIUS_API_KEY')}"
-        }
-
-        async with aiohttp.ClientSession(headers=headers) as session:
+        async with aiohttp.ClientSession() as session:
             async with session.post(
                 HELIUS_RPC_URL,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=15)
+                timeout=aiohttp.ClientTimeout(total=20)
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if "result" in data and data["result"]["items"]:
-                        logger.info(f"Найдено {len(data['result']['items'])} пулов")
-                        return data["result"]["items"]
-                    logger.error(f"Пустой ответ: {data}")
-                else:
-                    logger.error(f"Ошибка {resp.status}: {await resp.text()}")
+                    return data.get("result", {}).get("items", [])
         return []
     except Exception as e:
-        logger.error(f"Ошибка fetch_dlmm_pools: {str(e)}")
+        logger.error(f"Ошибка fallback метода: {str(e)}")
         return []
 
 async def sort_pool_accounts(accounts):
