@@ -174,17 +174,15 @@ async def init_solana() -> bool:
 async def get_pool_accounts():
     try:
         # Правильная структура фильтров согласно документации
-        filters=[
-  {
-    dataSize: LIQUIDITY_STATE_LAYOUT_V4_SPAN  // Размер данных должен быть числом
-  }
-]
-        
+        filters = [
+            {"dataSize": 752}  # Размер данных DLMM пула
+        ]
+
         response = await solana_client.get_program_accounts(
-            METEORA_PROGRAM_ID,
-            encoding="base64",
-            commitment=Confirmed,
-            filters=filters
+             METEORA_PROGRAM_ID,
+             encoding="base64",
+             commitment="confirmed",
+             filters=filters
         )
         
         return response.value if response else None
