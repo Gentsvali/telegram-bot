@@ -265,38 +265,50 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Используем DAS API
-        response = await umi.rpc.searchAssets({
-            "owner": METEORA_PROGRAM_ID,
-            "tokenType": "fungible",
-            "compressed": True,
-            "limit": 1000
-        })
+        # Создаем payload для DAS API
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "my-id",
+            "method": "searchAssets",
+            "params": {
+                "ownerAddress": str(METEORA_PROGRAM_ID),
+                "page": 1,
+                "limit": 1000
+            }
+        }
 
-        if not response:
-            logger.error("Нет ответа от DAS API")
-            return []
+        async with aiohttp.ClientSession() as session:
+            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    
+                    if "result" not in data:
+                        logger.error(f"Неожиданный ответ API: {data}")
+                        return []
+                        
+                    pools = []
+                    for asset in data["result"]:
+                        try:
+                            pool_data = {
+                                "id": asset["id"],
+                                "mint_x": asset["content"]["metadata"]["mint_x"],
+                                "mint_y": asset["content"]["metadata"]["mint_y"],
+                                "liquidity": int(asset["content"]["metadata"]["liquidity"]),
+                                "bin_step": int(asset["content"]["metadata"]["bin_step"]),
+                                "base_fee": float(asset["content"]["metadata"]["base_fee"]),
+                                "tvl_sol": float(asset["content"]["metadata"]["liquidity"]) / 1e9
+                            }
+                            pools.append(pool_data)
+                            logger.info(f"Найден пул: {pool_data}")
+                        except Exception as e:
+                            logger.error(f"Ошибка декодирования пула: {e}")
+                            continue
 
-        pools = []
-        for asset in response:
-            try:
-                pool_data = {
-                    "id": asset.id,
-                    "mint_x": asset.content.mint_x,
-                    "mint_y": asset.content.mint_y,
-                    "liquidity": int(asset.content.liquidity),
-                    "bin_step": int(asset.content.bin_step),
-                    "base_fee": float(asset.content.base_fee),
-                    "tvl_sol": float(asset.content.liquidity) / 1e9
-                }
-                pools.append(pool_data)
-                logger.info(f"Найден пул: {pool_data}")
-            except Exception as e:
-                logger.error(f"Ошибка декодирования пула: {e}")
-                continue
-
-        logger.info(f"Всего найдено пулов: {len(pools)}")
-        return pools
+                    logger.info(f"Всего найдено пулов: {len(pools)}")
+                    return pools
+                else:
+                    logger.error(f"Ошибка API: {resp.status}")
+                    return []
 
     except Exception as e:
         logger.error(f"Ошибка получения пулов: {e}")
