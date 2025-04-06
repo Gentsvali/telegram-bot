@@ -60,8 +60,6 @@ RPC_ENDPOINTS = [
 COMMITMENT = Confirmed
 METEORA_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 known_pools = set()
-accounts = await fetch_dlmm_pools()
-sorted_accounts = await sort_pool_accounts(accounts)
 
 # Инициализация Solana клиента
 solana_client = AsyncClient("https://api.mainnet-beta.solana.com", Confirmed)
@@ -416,22 +414,19 @@ async def startup_sequence():
 
         # 2. Загрузка фильтров
         logger.info("📥 Загрузка фильтров...")
-        try:
-            if not os.path.exists(FILE_PATH):
-                logger.info("Используем фильтры по умолчанию")
-            else:
-                await load_filters()
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки фильтров: {e}")
-            return False
+        await load_filters()
         
-        # 3. Инициализация бота
+        # 3. Получение и сортировка пулов
+        accounts = await fetch_dlmm_pools()
+        sorted_accounts = await sort_pool_accounts(accounts)
+        
+        # 4. Инициализация бота
         logger.info("🤖 Инициализация бота...")
         await application.initialize()
         await application.start()
         logger.info("✅ Бот успешно инициализирован")
 
-        # 4. Запуск мониторинга 
+        # 5. Запуск мониторинга 
         asyncio.create_task(monitor_pools())
         logger.info("DLMM Pool Monitor запущен через DAS API")
         return True
