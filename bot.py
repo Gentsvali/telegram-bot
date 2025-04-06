@@ -265,7 +265,7 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Создаем payload для DAS API с правильными полями
+        # Создаем payload с memcmp фильтром
         payload = {
             "jsonrpc": "2.0",
             "id": "my-id",
@@ -277,13 +277,12 @@ async def fetch_dlmm_pools():
                     "commitment": "confirmed",
                     "filters": [
                         {
-                            "dataSize": 752
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": str(METEORA_PROGRAM_ID)
+                            }
                         }
-                    ],
-                    "dataSlice": {
-                        "offset": 0, 
-                        "length": 100
-                    }
+                    ]
                 }
             ]
         }
@@ -306,6 +305,7 @@ async def fetch_dlmm_pools():
                             try:
                                 # Декодируем base64 данные
                                 account_data = base64.b64decode(account['account']['data'][0])
+                                logger.info(f"Декодированные данные аккаунта: {account_data[:100].hex()}")  # Добавляем лог для отладки
                                 
                                 pool_data = {
                                     "address": account['pubkey'],
