@@ -268,15 +268,15 @@ async def fetch_dlmm_pools():
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "getProgramAccounts",  # Правильный метод
+            "method": "getProgramAccounts", 
             "params": [
                 str(METEORA_PROGRAM_ID),
                 {
-                    "encoding": "base64",
-                    "commitment": "confirmed",
+                    "encoding": "base64",  # Используем base64 кодирование [(1)](https://solana.com/developers/guides/javascript/get-program-accounts)
+                    "commitment": "confirmed",  # Используем confirmed для быстрого ответа [(2)](https://solana.com/docs/rpc)
                     "filters": [
                         {
-                            "dataSize": 752  # Размер данных DLMM пула
+                            "dataSize": 752
                         }
                     ]
                 }
@@ -284,15 +284,23 @@ async def fetch_dlmm_pools():
         }
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(HELIUS_RPC_URL, json=payload) as resp:
+            async with session.post(HELIUS_RPC_URL, json=payload, timeout=30) as resp:  # Добавляем timeout
+                if resp.status != 200:
+                    logger.error(f"HTTP Error: {resp.status}")
+                    return []
+                    
                 data = await resp.json()
-                
                 if "error" in data:
                     logger.error(f"API Error: {data['error']}")
                     return []
                     
-                return data.get("result", [])
+                results = data.get("result", [])
+                logger.info(f"Найдено {len(results)} пулов")
+                return results
 
+    except asyncio.TimeoutError:
+        logger.error("Timeout при запросе к API")
+        return []
     except Exception as e:
         logger.error(f"Request failed: {str(e)}")
         return []
