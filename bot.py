@@ -291,8 +291,8 @@ async def parse_pool_data(pool: dict) -> Optional[dict]:
             "tvl": float(metadata.get("tvl", 0)),
             "fee_rate": float(metadata.get("fee_rate", 0)),
             "volume_24h": float(metadata.get("volume_24h", 0)),
-            "mint_x": next((a["mint"] for a in pool.get("token_accounts", []) if a["type"] == "token_x", ""),
-            "mint_y": next((a["mint"] for a in pool.get("token_accounts", []) if a["type"] == "token_y", "")
+            "mint_x": next((a["mint"] for a in pool.get("token_accounts", []) if a.get("type") == "token_x"), ""),
+            "mint_y": next((a["mint"] for a in pool.get("token_accounts", []) if a.get("type") == "token_y"), "")
         }
     except Exception as e:
         logger.error(f"Ошибка парсинга пула: {e}")
