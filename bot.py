@@ -60,6 +60,8 @@ RPC_ENDPOINTS = [
 COMMITMENT = Confirmed
 METEORA_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 known_pools = set()
+accounts = await fetch_dlmm_pools()
+sorted_accounts = await sort_pool_accounts(accounts)
 
 # Инициализация Solana клиента
 solana_client = AsyncClient("https://api.mainnet-beta.solana.com", Confirmed)
@@ -265,56 +267,84 @@ async def fetch_dlmm_pools():
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
         
-        # Формируем правильный RPC запрос согласно документации
-        payload = {
-            "jsonrpc": "2.0", # [(1)](https://solana.com/docs/rpc/http)
-            "id": 1,
-            "method": "getProgramAccounts", # [(1)](https://solana.com/docs/rpc/http)
-            "params": [
-                str(METEORA_PROGRAM_ID),
+        # Получаем аккаунты программы с правильными фильтрами
+        accounts = await solana_client.get_program_accounts(
+            METEORA_PROGRAM_ID,
+            encoding="base64",
+            commitment="confirmed",
+            filters=[
                 {
-                    "encoding": "base64", # [(2)](https://solana.com/docs/rpc/http/getprogramaccounts)
-                    "commitment": "confirmed", # [(2)](https://solana.com/docs/rpc/http/getprogramaccounts)
-                    "filters": [
-                        {
-                            "dataSize": 752 # Размер данных DLMM пула
-                        }
-                    ]
+                    "dataSize": 752  # Размер данных DLMM пула
                 }
             ]
-        }
+        )
 
-        # Используем правильный URL и заголовки
-        headers = {
-            "Content-Type": "application/json"
-        }
+        if not accounts:
+            logger.info("Пулы не найдены")
+            return []
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(HELIUS_RPC_URL, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    logger.error(f"HTTP Error: {resp.status}")
-                    return []
-                    
-                data = await resp.json()
-                if "error" in data:
-                    logger.error(f"API Error: {data['error']}")
-                    return []
-
-                results = data.get("result", [])
-                logger.info(f"Всего найдено пулов: {len(results)}")
+        logger.info(f"Всего найдено пулов: {len(accounts)}")
+        
+        filtered_pools = []
+        for acc in accounts:
+            try:
+                # Декодируем данные аккаунта
+                data = base64.b64decode(acc.account.data)
                 
-                filtered_pools = []
-                for acc in results:
-                    pool_data = decode_pool_data(base64.b64decode(acc["account"]["data"][0]))
-                    if pool_data and filter_pool(pool_data):
-                        filtered_pools.append(pool_data)
+                # Извлекаем данные пула
+                pool_data = {
+                    "address": str(acc.pubkey),
+                    "mint_x": str(PublicKey(data[0:32])),
+                    "mint_y": str(PublicKey(data[32:64])),
+                    "liquidity": int.from_bytes(data[64:72], "little"),
+                    "bin_step": int.from_bytes(data[88:90], "little"),
+                    "base_fee": int.from_bytes(data[90:92], "little") / 10000,
+                    "tvl_sol": int.from_bytes(data[64:72], "little") / 1e9
+                }
+                
+                if filter_pool(pool_data):
+                    filtered_pools.append(pool_data)
+                    
+            except Exception as e:
+                logger.error(f"Ошибка декодирования пула: {e}")
+                continue
 
-                logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
-                return filtered_pools
+        logger.info(f"Из них подходят под фильтры: {len(filtered_pools)}")
+        return filtered_pools
 
     except Exception as e:
-        logger.error(f"Request failed: {str(e)}")
+        logger.error(f"Ошибка получения пулов: {e}")
         return []
+
+async def sort_pool_accounts(accounts):
+    """Сортировка аккаунтов пулов по названию"""
+    try:
+        HEADER_SIZE = 4  # Размер заголовка для длины строки
+        sorted_accounts = []
+        
+        for acc in accounts:
+            try:
+                data = base64.b64decode(acc.account.data)
+                length = int.from_bytes(data[0:4], "little")
+                
+                if len(data) < HEADER_SIZE + length:
+                    logger.error("Недостаточная длина буфера")
+                    continue
+                    
+                account_data = data[HEADER_SIZE:HEADER_SIZE + length]
+                sorted_accounts.append((account_data, acc))
+                
+            except Exception as e:
+                logger.error(f"Ошибка обработки аккаунта: {e}")
+                continue
+                
+        # Сортируем по данным
+        sorted_accounts.sort(key=lambda x: x[0])
+        return [acc[1] for acc in sorted_accounts]
+        
+    except Exception as e:
+        logger.error(f"Ошибка сортировки: {e}")
+        return accounts
 
 async def parse_pool_data(pool: dict) -> Optional[dict]:
     """Извлекает ключевые данные из структуры пула"""
