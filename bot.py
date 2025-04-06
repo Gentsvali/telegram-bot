@@ -260,7 +260,7 @@ async def monitor_pools():
     finally:
         logger.info("📴 Мониторинг завершил работу")
 
-async def fetch_dlmm_pools() -> list:
+async def fetch_dlmm_pools():
     """Корректный запрос пулов DLMM"""
     try:
         logger.info("🔍 Ищем активные DLMM пулы...")
@@ -268,12 +268,17 @@ async def fetch_dlmm_pools() -> list:
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "programSubscribe",
+            "method": "getProgramAccounts",  # Правильный метод
             "params": [
                 str(METEORA_PROGRAM_ID),
                 {
                     "encoding": "base64",
-                    "commitment": "confirmed"
+                    "commitment": "confirmed",
+                    "filters": [
+                        {
+                            "dataSize": 752  # Размер данных DLMM пула
+                        }
+                    ]
                 }
             ]
         }
@@ -282,15 +287,11 @@ async def fetch_dlmm_pools() -> list:
             async with session.post(HELIUS_RPC_URL, json=payload) as resp:
                 data = await resp.json()
                 
-                # Сохраняем ответ для диагностики (можно убрать после отладки)
-                with open("api_debug.json", "w") as f:
-                    json.dump(data, f, indent=2)
-                
                 if "error" in data:
                     logger.error(f"API Error: {data['error']}")
                     return []
-                
-                return data.get("result", {}).get("items", [])
+                    
+                return data.get("result", [])
 
     except Exception as e:
         logger.error(f"Request failed: {str(e)}")
