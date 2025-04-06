@@ -261,19 +261,17 @@ async def monitor_pools():
         logger.info("📴 Мониторинг завершил работу")
 
 async def fetch_dlmm_pools() -> list:
-    """Запрашивает пулы DLMM через DAS API"""
+    """Корректный запрос пулов DLMM"""
     try:
-        logger.info(f"🔍 Запрос пулов DLMM...")
+        logger.info("🔍 Ищем активные DLMM пулы...")
         
         payload = {
             "jsonrpc": "2.0",
-            "id": "dlmm_request",
+            "id": "dlmm_scan",
             "method": "searchAssets",
             "params": {
-                "condition": {
-                    "interface": "LiquidityPool",
-                    "ownerAddress": str(METEORA_PROGRAM_ID)
-                },
+                "ownerAddress": str(METEORA_PROGRAM_ID),
+                "interface": "LiquidityPool",
                 "page": 1,
                 "limit": 100
             }
@@ -281,27 +279,20 @@ async def fetch_dlmm_pools() -> list:
 
         async with aiohttp.ClientSession() as session:
             async with session.post(HELIUS_RPC_URL, json=payload) as resp:
-                # Получаем сырой ответ
                 data = await resp.json()
                 
-                # --- ВРЕМЕННЫЙ DEBUG-ВЫВОД (НАЧАЛО) ---
-                debug_path = "api_response_debug.json"
-                with open(debug_path, "w") as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-                logger.info(f"📁 Полный ответ сохранён в {debug_path}")
-                # --- ВРЕМЕННЫЙ DEBUG-ВЫВОД (КОНЕЦ) ---
+                # Сохраняем ответ для диагностики (можно убрать после отладки)
+                with open("api_debug.json", "w") as f:
+                    json.dump(data, f, indent=2)
                 
-                # Проверка ошибок API
                 if "error" in data:
-                    logger.error(f"❌ Ошибка API: {data['error']}")
+                    logger.error(f"API Error: {data['error']}")
                     return []
                 
-                items = data.get("result", {}).get("items", [])
-                logger.info(f"✅ Найдено {len(items)} пулов")
-                return items
+                return data.get("result", {}).get("items", [])
 
     except Exception as e:
-        logger.error(f"💥 Ошибка запроса: {str(e)}", exc_info=True)
+        logger.error(f"Request failed: {str(e)}")
         return []
 
 async def parse_pool_data(pool: dict) -> Optional[dict]:
