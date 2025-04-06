@@ -12,10 +12,10 @@ from telegram.ext import (
 from solders.pubkey import Pubkey
 
 # --- Конфигурация ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "ВАШ_ТОКЕН"  # Обязательно!
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY") or "ВАШ_КЛЮЧ"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "ВАШ_ТОКЕН")
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "ВАШ_КЛЮЧ")
 USER_ID = int(os.getenv("USER_ID", "ВАШ_ID"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL") or f"https://ваш-домен.xyz/{TELEGRAM_TOKEN}"
+WEBHOOK_BASE_URL = os.getenv("WEBHOOK_URL", "https://ваш-домен.xyz")
 PROGRAM_ID = Pubkey.from_string(os.getenv("PROGRAM_ID", "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"))
 
 # --- Настройка логов ---
@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Quart(__name__)
-app.bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+app.bot_app = None  # Инициализируется в startup
 known_pools = set()
 
 # --- Основные функции ---
@@ -58,7 +58,7 @@ async def fetch_pools():
         return []
 
 async def monitor_pools():
-    """Постоянный мониторинг новых пулов"""
+    """Фоновая задача мониторинга"""
     while True:
         try:
             pools = await fetch_pools()
@@ -86,7 +86,7 @@ async def send_notification(pool_id):
             f"[Solscan](https://solscan.io/account/{pool_id})\n"
             f"[Meteora](https://app.meteora.ag/pool/{pool_id})"
         )
-        await app.bot.bot.send_message(
+        await app.bot_app.bot.send_message(
             chat_id=USER_ID,
             text=message,
             parse_mode="Markdown"
@@ -101,28 +101,45 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔍 Отслеживается пулов: {len(known_pools)}")
 
-# --- Вебхук ---
+# --- Инициализация ---
 @app.before_serving
-async def init():
+async def startup():
     """Инициализация при запуске"""
-    # Регистрация команд
-    app.bot.add_handler(CommandHandler("start", start))
-    app.bot.add_handler(CommandHandler("status", status))
+    # Создаем и инициализируем бота
+    app.bot_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    await app.bot_app.initialize()
     
-    # Установка вебхука с токеном в URL
-    webhook_url = f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"
-    await app.bot.bot.set_webhook(webhook_url)
+    # Регистрируем обработчики команд
+    app.bot_app.add_handler(CommandHandler("start", start))
+    app.bot_app.add_handler(CommandHandler("status", status))
+    
+    # Устанавливаем вебхук
+    webhook_url = f"{WEBHOOK_BASE_URL}/webhook"
+    await app.bot_app.bot.set_webhook(webhook_url)
     logger.info(f"🌍 Вебхук установлен на {webhook_url}")
     
-    # Запуск мониторинга
+    # Запускаем мониторинг
     asyncio.create_task(monitor_pools())
+    logger.info("✅ Сервис запущен")
 
-@app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
+@app.after_serving
+async def shutdown():
+    """Корректное завершение"""
+    if app.bot_app:
+        await app.bot_app.bot.delete_webhook()
+        await app.bot_app.shutdown()
+        logger.info("🛑 Вебхук удален")
+
+# --- Обработка вебхука ---
+@app.route('/webhook', methods=['POST'])
 async def webhook():
-    """Обработчик вебхука"""
+    """Обработчик вебхука Telegram"""
+    if not app.bot_app:
+        return jsonify({"status": "error", "reason": "Bot not initialized"}), 500
+    
     data = await request.get_json()
-    update = Update.de_json(data, app.bot.bot)
-    await app.bot.process_update(update)
+    update = Update.de_json(data, app.bot_app.bot)
+    await app.bot_app.process_update(update)
     return jsonify({"status": "ok"})
 
 @app.route('/')
