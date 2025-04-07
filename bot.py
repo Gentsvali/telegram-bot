@@ -13,12 +13,13 @@ from telegram.ext import (
 from solders.pubkey import Pubkey
 
 # --- Конфигурация ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # Обязательно через переменные окружения!
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # Ваш ключ Helius
-USER_ID = int(os.getenv("USER_ID"))           # Ваш Telegram ID
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_URL")   # URL вебхука (например, Railway)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")
+USER_ID = int(os.getenv("USER_ID")) if os.getenv("USER_ID") else None
+WEBHOOK_BASE_URL = os.getenv("WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 10000))
 
-# Программа DLMM Meteora (публичный адрес)
+# Программа DLMM Meteora
 PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 
 # --- Настройка логов ---
@@ -28,18 +29,16 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
-
-# Отключаем логирование HTTP-запросов (чтобы не светить токены)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
 app = Quart(__name__)
-app.bot_app = None  # Инициализируется в startup
+app.bot_app = None
 known_pools = set()
-
 shutdown_event = asyncio.Event()
-# Обработчик сигналов
-def signal_handler():
+
+# --- Обработчики сигналов ---
+def handle_signal():
     logger.info("Получен сигнал остановки")
     shutdown_event.set()
 
@@ -55,11 +54,8 @@ async def fetch_first_50_pools():
                 str(PROGRAM_ID),
                 {
                     "encoding": "jsonParsed",
-                    "commitment": "confirmed",  # Добавляем параметр
-                    "dataSlice": {
-                        "offset": 0,
-                        "length": 100
-                    },
+                    "commitment": "confirmed",
+                    "dataSlice": {"offset": 0, "length": 100},
                     "withContext": True,
                     "limit": 50
                 }
@@ -70,61 +66,35 @@ async def fetch_first_50_pools():
             async with session.post(url, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    
-                    if "error" in data:
-                        logger.error(f"Helius API error: {data['error']}")
-                        return []
-                    
-                    accounts = data.get("result", {}).get("value", [])
-                    logger.info(f"Получено {len(accounts)} аккаунтов")
-                    
-                    # Выводим информацию о размере каждого аккаунта
-                    for account in accounts:
-                        print(f"Account pubkey: {account['pubkey']}")
-                        print(f"Data size: {account['account'].get('space', 'size not available')}")
-                        print("---")
-                    
-                    return accounts
+                    return data.get("result", {}).get("value", [])
                 logger.error(f"Ошибка Helius API: {resp.status}")
                 return []
-                
     except Exception as e:
-        logger.error(f"Ошибка при запросе пулов: {e}", exc_info=True)
+        logger.error(f"Ошибка при запросе пулов: {e}")
         return []
 
 async def monitor_pools():
     logger.info("🔄 Запуск мониторинга DLMM пулов...")
-    while not shutdown_event.is_set():  # Проверяем событие остановки
+    while not shutdown_event.is_set():
         try:
             pools = await fetch_first_50_pools()
-            if shutdown_event.is_set():  # Проверяем после длительных операций
+            if shutdown_event.is_set():
                 break
-            
-            if not pools:
-                logger.info("Новых пулов не найдено")
-                await asyncio.sleep(60)
-                continue
                 
             new_pools = [p["pubkey"] for p in pools if p["pubkey"] not in known_pools]
             
-            if not new_pools:
-                logger.info("Нет новых пулов в этом цикле")
-                await asyncio.sleep(60)
-                continue
-                
-            logger.info(f"Найдено {len(new_pools)} новых пулов")
-            for pool_id in new_pools:
-                known_pools.add(pool_id)
-                await send_notification(pool_id)
+            if new_pools:
+                logger.info(f"Найдено {len(new_pools)} новых пулов")
+                for pool_id in new_pools:
+                    known_pools.add(pool_id)
+                    await send_notification(pool_id)
             
             await asyncio.sleep(60)
-            
         except Exception as e:
-            logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
+            logger.error(f"Ошибка мониторинга: {e}")
             await asyncio.sleep(30)
 
 async def send_notification(pool_id):
-    """Отправляет уведомление о новом пуле в Telegram"""
     try:
         message = (
             "🆕 **Обнаружен новый DLMM пул!**\n"
@@ -150,25 +120,34 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Инициализация ---
 @app.before_serving
 async def startup():
+    # Проверка переменных окружения
+    if not all([TELEGRAM_TOKEN, HELIUS_API_KEY, USER_ID, WEBHOOK_BASE_URL]):
+        raise ValueError("Не все обязательные переменные окружения установлены!")
+
+    # Инициализация бота
     app.bot_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     await app.bot_app.initialize()
     
+    # Установка команд
     app.bot_app.add_handler(CommandHandler("start", start))
     app.bot_app.add_handler(CommandHandler("status", status))
     
+    # Установка вебхука
     webhook_url = f"{WEBHOOK_BASE_URL}/webhook"
     await app.bot_app.bot.set_webhook(webhook_url)
     logger.info(f"🌍 Вебхук установлен: {webhook_url}")
     
+    # Запуск мониторинга
     asyncio.create_task(monitor_pools())
     logger.info("✅ Бот запущен и мониторит новые пулы")
 
 @app.after_serving
 async def shutdown():
     if app.bot_app:
+        logger.info("🛑 Остановка бота...")
         await app.bot_app.bot.delete_webhook()
         await app.bot_app.shutdown()
-    logger.info("🛑 Бот остановлен")
+    logger.info("Бот остановлен")
 
 # --- Обработка вебхука ---
 @app.route('/webhook', methods=['POST'])
@@ -186,10 +165,21 @@ async def health():
     return jsonify({"status": "active", "tracked_pools": len(known_pools)})
 
 if __name__ == '__main__':
+    # Установка обработчиков сигналов
+    signal.signal(signal.SIGINT, lambda s, f: handle_signal())
+    signal.signal(signal.SIGTERM, lambda s, f: handle_signal())
+
     try:
-        app.run(host='0.0.0.0', port=10000)
-    except KeyboardInterrupt:
-        logger.info("Получен сигнал остановки")
-        shutdown_event.set()
+        # Запуск Quart через hypercorn (рекомендуется для продакшена)
+        from hypercorn.config import Config
+        from hypercorn.asyncio import serve
+        
+        config = Config()
+        config.bind = [f"0.0.0.0:{PORT}"]
+        config.use_reloader = False
+        
+        asyncio.run(serve(app, config))
+    except Exception as e:
+        logger.error(f"Ошибка при запуске: {e}")
     finally:
-        logger.info("Очистка ресурсов...")
+        logger.info("Приложение завершено")
