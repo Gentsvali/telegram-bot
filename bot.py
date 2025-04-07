@@ -53,7 +53,7 @@ if missing_vars:
 # Инициализация нескольких RPC клиентов для отказоустойчивости
 RPC_ENDPOINTS = [
     HELIUS_RPC_URL,
-    "https://api.mainnet-beta.solana.com",
+    "https://mainnet.helius-rpc.com",
     f"https://api.helius.xyz/v0/transactions/?api-key={os.getenv('HELIUS_API_KEY')}"
 ]
 # Настройки Solana
@@ -62,7 +62,7 @@ METEORA_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVa
 known_pools = set()
 
 # Инициализация Solana клиента
-solana_client = AsyncClient("https://api.mainnet-beta.solana.com", Confirmed)
+solana_client = AsyncClient("https://mainnet.helius-rpc.com", Confirmed)
 
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
