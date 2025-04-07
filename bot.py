@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import aiohttp
+import signal
 from quart import Quart, request, jsonify
 from telegram import Update
 from telegram.ext import (
@@ -36,6 +37,12 @@ app = Quart(__name__)
 app.bot_app = None  # Инициализируется в startup
 known_pools = set()
 
+shutdown_event = asyncio.Event()
+# Обработчик сигналов
+def signal_handler():
+    logger.info("Получен сигнал остановки")
+    shutdown_event.set()
+
 # --- Основные функции ---
 async def fetch_first_50_pools():
     try:
@@ -43,17 +50,18 @@ async def fetch_first_50_pools():
         payload = {
             "jsonrpc": "2.0",
             "id": "dlmm-fetcher",
-            "method": "getProgramAccounts", 
+            "method": "getProgramAccounts",
             "params": [
                 str(PROGRAM_ID),
                 {
-                    "encoding": "jsonParsed",  # Используем jsonParsed для удобного чтения данных
-                    "dataSlice": {             # Ограничиваем размер возвращаемых данных
+                    "encoding": "jsonParsed",
+                    "commitment": "confirmed",  # Добавляем параметр
+                    "dataSlice": {
                         "offset": 0,
-                        "length": 100          # Берем первые 100 байт для анализа
+                        "length": 100
                     },
                     "withContext": True,
-                    "limit": 50                # Ограничиваем количество возвращаемых аккаунтов
+                    "limit": 50
                 }
             ]
         }
@@ -85,11 +93,12 @@ async def fetch_first_50_pools():
         return []
 
 async def monitor_pools():
-    """Мониторинг новых DLMM пулов"""
     logger.info("🔄 Запуск мониторинга DLMM пулов...")
-    while True:
+    while not shutdown_event.is_set():  # Проверяем событие остановки
         try:
             pools = await fetch_first_50_pools()
+            if shutdown_event.is_set():  # Проверяем после длительных операций
+                break
             
             if not pools:
                 logger.info("Новых пулов не найдено")
@@ -177,4 +186,10 @@ async def health():
     return jsonify({"status": "active", "tracked_pools": len(known_pools)})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    try:
+        app.run(host='0.0.0.0', port=10000)
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал остановки")
+        shutdown_event.set()
+    finally:
+        logger.info("Очистка ресурсов...")
