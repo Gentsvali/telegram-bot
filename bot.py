@@ -12,11 +12,13 @@ from telegram.ext import (
 from solders.pubkey import Pubkey
 
 # --- Конфигурация ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "ВАШ_ТОКЕН")
-HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "ВАШ_КЛЮЧ")
-USER_ID = int(os.getenv("USER_ID", "ВАШ_ID"))
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_URL", "https://ваш-домен.xyz")
-PROGRAM_ID = Pubkey.from_string(os.getenv("PROGRAM_ID", "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"))
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # Обязательно через переменные окружения!
+HELIUS_API_KEY = os.getenv("HELIUS_API_KEY")  # Ваш ключ Helius
+USER_ID = int(os.getenv("USER_ID"))           # Ваш Telegram ID
+WEBHOOK_BASE_URL = os.getenv("WEBHOOK_URL")   # URL вебхука (например, Railway)
+
+# Программа DLMM Meteora (публичный адрес)
+PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
 
 # --- Настройка логов ---
 logging.basicConfig(
@@ -26,90 +28,93 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Отключаем логирование HTTP-запросов (чтобы не светить токены)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("aiohttp").setLevel(logging.WARNING)
+
 app = Quart(__name__)
 app.bot_app = None  # Инициализируется в startup
 known_pools = set()
 
 # --- Основные функции ---
-async def fetch_pools():
-    """Улучшенный запрос пулов через Helius API"""
+async def fetch_dlmm_pools():
+    """Запрашивает пулы DLMM, относящиеся к PROGRAM_ID"""
     try:
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         payload = {
             "jsonrpc": "2.0",
             "id": "dlmm-fetcher",
-            "method": "getAssetsByGroup",  # Измененный метод!
-            "params": {
-                "groupKey": "collection",
-                "groupValue": "DLMM Pool",  # Ищем по группе
-                "page": 1,
-                "limit": 100,
-                "displayOptions": {"showUnverifiedCollections": True}  # Важно!
-            }
+            "method": "getProgramAccounts",
+            "params": [
+                str(PROGRAM_ID),
+                {
+                    "encoding": "jsonParsed",
+                    "filters": [
+                        {"dataSize": 324},  # Размер данных для DLMM пула (уточните у Meteora!)
+                    ],
+                    "withContext": True
+                }
+            ]
         }
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    logger.debug(f"Raw API response: {data}")  # Для отладки
                     
                     if "error" in data:
-                        logger.error(f"API error: {data['error']}")
+                        logger.error(f"Helius API error: {data['error']}")
                         return []
                     
-                    items = data.get("result", {}).get("items", [])
-                    logger.info(f"Found {len(items)} pools in response")
-                    return items
+                    accounts = data.get("result", {}).get("value", [])
+                    logger.info(f"Найдено {len(accounts)} DLMM пулов")
+                    return [account["pubkey"] for account in accounts]
                 
-                logger.error(f"HTTP error {resp.status}: {await resp.text()}")
+                logger.error(f"Ошибка Helius API: {resp.status}")
                 return []
                 
     except Exception as e:
-        logger.error(f"Fetch error: {str(e)}", exc_info=True)
+        logger.error(f"Ошибка при запросе пулов: {e}", exc_info=True)
         return []
 
 async def monitor_pools():
-    """Улучшенный мониторинг с детальным логированием"""
-    logger.info("Starting pool monitoring...")
+    """Мониторинг новых DLMM пулов"""
+    logger.info("🔄 Запуск мониторинга DLMM пулов...")
     while True:
         try:
-            logger.info("Checking for new pools...")
-            pools = await fetch_pools()
+            pools = await fetch_dlmm_pools()
             
             if not pools:
-                logger.warning("Received empty pools list")
+                logger.info("Новых пулов не найдено")
                 await asyncio.sleep(60)
                 continue
                 
-            new_pools = [p for p in pools if p["id"] not in known_pools]
+            new_pools = [p for p in pools if p not in known_pools]
             
             if not new_pools:
-                logger.info("No new pools found this cycle")
+                logger.info("Нет новых пулов в этом цикле")
                 await asyncio.sleep(60)
                 continue
                 
-            logger.info(f"Found {len(new_pools)} new pools")
-            for pool in new_pools:
-                pool_id = pool["id"]
+            logger.info(f"Найдено {len(new_pools)} новых пулов")
+            for pool_id in new_pools:
                 known_pools.add(pool_id)
-                logger.info(f"New pool detected: {pool_id}")
                 await send_notification(pool_id)
             
             await asyncio.sleep(60)
             
         except Exception as e:
-            logger.error(f"Monitoring crashed: {str(e)}", exc_info=True)
+            logger.error(f"Ошибка мониторинга: {e}", exc_info=True)
             await asyncio.sleep(30)
 
 async def send_notification(pool_id):
-    """Отправка уведомления в Telegram"""
+    """Отправляет уведомление о новом пуле в Telegram"""
     try:
         message = (
-            "🆕 Новый DLMM пул!\n"
-            f"ID: `{pool_id}`\n"
-            f"[Solscan](https://solscan.io/account/{pool_id})\n"
-            f"[Meteora](https://app.meteora.ag/pool/{pool_id})"
+            "🆕 **Обнаружен новый DLMM пул!**\n"
+            f"• Адрес: `{pool_id}`\n"
+            f"• [Просмотр в Solscan](https://solscan.io/account/{pool_id})\n"
+            f"• [Открыть в Meteora](https://app.meteora.ag/pool/{pool_id})"
         )
         await app.bot_app.bot.send_message(
             chat_id=USER_ID,
@@ -117,48 +122,41 @@ async def send_notification(pool_id):
             parse_mode="Markdown"
         )
     except Exception as e:
-        logger.error(f"Ошибка отправки: {e}")
+        logger.error(f"Ошибка отправки уведомления: {e}")
 
-# --- Обработчики команд ---
+# --- Telegram команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Бот активен! Мониторинг DLMM пулов запущен")
+    await update.message.reply_text("🤖 Бот запущен! Мониторинг DLMM пулов активен")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🔍 Отслеживается пулов: {len(known_pools)}")
+    await update.message.reply_text(f"🔍 Отслеживается {len(known_pools)} пулов")
 
 # --- Инициализация ---
 @app.before_serving
 async def startup():
-    """Инициализация при запуске"""
-    # Создаем и инициализируем бота
     app.bot_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     await app.bot_app.initialize()
     
-    # Регистрируем обработчики команд
     app.bot_app.add_handler(CommandHandler("start", start))
     app.bot_app.add_handler(CommandHandler("status", status))
     
-    # Устанавливаем вебхук
     webhook_url = f"{WEBHOOK_BASE_URL}/webhook"
     await app.bot_app.bot.set_webhook(webhook_url)
-    logger.info(f"🌍 Вебхук установлен на {webhook_url}")
+    logger.info(f"🌍 Вебхук установлен: {webhook_url}")
     
-    # Запускаем мониторинг
     asyncio.create_task(monitor_pools())
-    logger.info("✅ Сервис запущен")
+    logger.info("✅ Бот запущен и мониторит новые пулы")
 
 @app.after_serving
 async def shutdown():
-    """Корректное завершение"""
     if app.bot_app:
         await app.bot_app.bot.delete_webhook()
         await app.bot_app.shutdown()
-        logger.info("🛑 Вебхук удален")
+    logger.info("🛑 Бот остановлен")
 
 # --- Обработка вебхука ---
 @app.route('/webhook', methods=['POST'])
 async def webhook():
-    """Обработчик вебхука Telegram"""
     if not app.bot_app:
         return jsonify({"status": "error", "reason": "Bot not initialized"}), 500
     
@@ -169,7 +167,7 @@ async def webhook():
 
 @app.route('/')
 async def health():
-    return jsonify({"status": "active", "pools": len(known_pools)})
+    return jsonify({"status": "active", "tracked_pools": len(known_pools)})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
