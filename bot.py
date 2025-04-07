@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio
 import aiohttp
-import signal
 from quart import Quart, request, jsonify
 from telegram import Update
 from telegram.ext import (
@@ -35,12 +34,6 @@ logging.getLogger("aiohttp").setLevel(logging.WARNING)
 app = Quart(__name__)
 app.bot_app = None
 known_pools = set()
-shutdown_event = asyncio.Event()
-
-# --- Обработчики сигналов ---
-def handle_signal():
-    logger.info("Получен сигнал остановки")
-    shutdown_event.set()
 
 # --- Основные функции ---
 async def fetch_first_5_pools():
@@ -75,12 +68,9 @@ async def fetch_first_5_pools():
 
 async def monitor_pools():
     logger.info("🔄 Запуск мониторинга DLMM пулов...")
-    while not shutdown_event.is_set():
+    while True:
         try:
             pools = await fetch_first_5_pools()
-            if shutdown_event.is_set():
-                break
-                
             new_pools = [p["pubkey"] for p in pools if p["pubkey"] not in known_pools]
             
             if new_pools:
@@ -164,22 +154,20 @@ async def webhook():
 async def health():
     return jsonify({"status": "active", "tracked_pools": len(known_pools)})
 
-if __name__ == '__main__':
-    # Установка обработчиков сигналов
-    signal.signal(signal.SIGINT, lambda s, f: handle_signal())
-    signal.signal(signal.SIGTERM, lambda s, f: handle_signal())
+async def run():
+    config = Config()
+    config.bind = [f"0.0.0.0:{PORT}"]
+    config.use_reloader = False
+    await serve(app, config)
 
+if __name__ == '__main__':
+    from hypercorn.config import Config
+    from hypercorn.asyncio import serve
+    
+    # Упрощенный запуск для Railway
     try:
-        # Запуск Quart через hypercorn (рекомендуется для продакшена)
-        from hypercorn.config import Config
-        from hypercorn.asyncio import serve
-        
-        config = Config()
-        config.bind = [f"0.0.0.0:{PORT}"]
-        config.use_reloader = False
-        
-        asyncio.run(serve(app, config))
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        logger.info("Приложение остановлено по запросу пользователя")
     except Exception as e:
         logger.error(f"Ошибка при запуске: {e}")
-    finally:
-        logger.info("Приложение завершено")
