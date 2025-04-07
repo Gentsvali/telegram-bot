@@ -77,7 +77,6 @@ async def fetch_first_50_pools():
                         print("---")
                     
                     return accounts
-                
                 logger.error(f"Ошибка Helius API: {resp.status}")
                 return []
                 
@@ -97,7 +96,7 @@ async def monitor_pools():
                 await asyncio.sleep(60)
                 continue
                 
-            new_pools = [p for p in pools if p not in known_pools]
+            new_pools = [p["pubkey"] for p in pools if p["pubkey"] not in known_pools]
             
             if not new_pools:
                 logger.info("Нет новых пулов в этом цикле")
