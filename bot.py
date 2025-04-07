@@ -198,7 +198,7 @@ async def get_pool_accounts():
     try:
         # Правильная структура фильтров согласно документации
         filters = [
-            {"dataSize": MARKET_STATE_LAYOUT_V3.span }  # Размер данных DLMM пула
+            {"dataSize": 200 }  # Размер данных DLMM пула
         ]
 
         response = await solana_client.get_program_accounts(
