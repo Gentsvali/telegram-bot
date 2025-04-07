@@ -37,22 +37,23 @@ app.bot_app = None  # Инициализируется в startup
 known_pools = set()
 
 # --- Основные функции ---
-async def fetch_dlmm_pools():
-    """Запрашивает пулы DLMM, относящиеся к PROGRAM_ID"""
+async def fetch_first_50_pools():
     try:
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         payload = {
             "jsonrpc": "2.0",
             "id": "dlmm-fetcher",
-            "method": "getProgramAccounts",
+            "method": "getProgramAccounts", 
             "params": [
                 str(PROGRAM_ID),
                 {
-                    "encoding": "jsonParsed",
-                    "filters": [
-                        {"dataSize": 324},  # Размер данных для DLMM пула (уточните у Meteora!)
-                    ],
-                    "withContext": True
+                    "encoding": "jsonParsed",  # Используем jsonParsed для удобного чтения данных
+                    "dataSlice": {             # Ограничиваем размер возвращаемых данных
+                        "offset": 0,
+                        "length": 100          # Берем первые 100 байт для анализа
+                    },
+                    "withContext": True,
+                    "limit": 50                # Ограничиваем количество возвращаемых аккаунтов
                 }
             ]
         }
@@ -67,8 +68,15 @@ async def fetch_dlmm_pools():
                         return []
                     
                     accounts = data.get("result", {}).get("value", [])
-                    logger.info(f"Найдено {len(accounts)} DLMM пулов")
-                    return [account["pubkey"] for account in accounts]
+                    logger.info(f"Получено {len(accounts)} аккаунтов")
+                    
+                    # Выводим информацию о размере каждого аккаунта
+                    for account in accounts:
+                        print(f"Account pubkey: {account['pubkey']}")
+                        print(f"Data size: {account['account'].get('space', 'size not available')}")
+                        print("---")
+                    
+                    return accounts
                 
                 logger.error(f"Ошибка Helius API: {resp.status}")
                 return []
@@ -82,7 +90,7 @@ async def monitor_pools():
     logger.info("🔄 Запуск мониторинга DLMM пулов...")
     while True:
         try:
-            pools = await fetch_dlmm_pools()
+            pools = await fetch_first_50_pools()
             
             if not pools:
                 logger.info("Новых пулов не найдено")
