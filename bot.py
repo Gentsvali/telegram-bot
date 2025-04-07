@@ -43,7 +43,7 @@ def handle_signal():
     shutdown_event.set()
 
 # --- Основные функции ---
-async def fetch_first_50_pools():
+async def fetch_first_5_pools():
     try:
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         payload = {
@@ -57,7 +57,7 @@ async def fetch_first_50_pools():
                     "commitment": "confirmed",
                     "dataSlice": {"offset": 0, "length": 100},
                     "withContext": True,
-                    "limit": 50
+                    "limit": 5
                 }
             ]
         }
@@ -77,7 +77,7 @@ async def monitor_pools():
     logger.info("🔄 Запуск мониторинга DLMM пулов...")
     while not shutdown_event.is_set():
         try:
-            pools = await fetch_first_50_pools()
+            pools = await fetch_first_5_pools()
             if shutdown_event.is_set():
                 break
                 
