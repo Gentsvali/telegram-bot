@@ -50,20 +50,13 @@ if missing_vars:
     logger.error(error_message)
     raise ValueError(error_message)
 
-# Инициализация нескольких RPC клиентов для отказоустойчивости
 RPC_ENDPOINTS = [
-    HELIUS_RPC_URL,
-    "https://mainnet.helius-rpc.com",
-    f"https://api.helius.xyz/v0/transactions/?api-key={os.getenv('HELIUS_API_KEY')}"
+    f"https://mainnet.helius-rpc.com/?api-key={os.getenv('HELIUS_API_KEY')}",
+    f"https://api.helius-rpc.com/?api-key={os.getenv('HELIUS_API_KEY')}"
 ]
-# Настройки Solana
-COMMITMENT = Confirmed
-METEORA_PROGRAM_ID = Pubkey.from_string("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo")
-known_pools = set()
 
 # Инициализация Solana клиента
-solana_client = AsyncClient("https://mainnet.helius-rpc.com", Confirmed)
-
+solana_client = AsyncClient(RPC_ENDPOINTS[0], Confirmed)
 # Дополнительные настройки
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 
